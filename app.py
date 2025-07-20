@@ -702,6 +702,10 @@ def clean_filename(filename: str) -> str:
 # Create the application
 app, socketio = create_app()
 
+# Make app available for gunicorn
+# gunicorn will import this module and look for 'app'
+application = app
+
 if __name__ == '__main__':
     logger = logging.getLogger(__name__)
     logger.info("Starting CSV Merger Application")

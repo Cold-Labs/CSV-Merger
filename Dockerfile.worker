@@ -1,4 +1,4 @@
-# Railway-optimized Dockerfile for CSV Merger
+# Railway Worker Dockerfile for CSV Merger RQ Workers
 FROM python:3.13-slim
 
 # Set environment variables
@@ -29,8 +29,5 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 RUN chown -R appuser:appuser /app
 USER appuser
 
-# Expose port (Railway will set PORT env var)
-EXPOSE 5001
-
-# Simple start command as recommended by Railway docs
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT:-5001} --workers 2 app:application"] 
+# Start RQ worker
+CMD ["sh", "-c", "python -m rq.cli worker --url $REDIS_URL csv_processing"] 

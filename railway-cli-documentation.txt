@@ -1,0 +1,202 @@
+TITLE: Deploying with Railway CLI in GitHub Actions
+DESCRIPTION: This YAML configuration defines a GitHub Actions job that uses the Railway CLI Docker image for deployment. It checks out the repository, sets environment variables for service ID and Railway token, and then runs `railway up` to deploy the service.
+SOURCE: https://github.com/railwayapp/cli/blob/master/README.md#_snippet_9
+
+LANGUAGE: yaml
+CODE:
+```
+deploy-job:
+  runs-on: ubuntu-latest
+  container: ghcr.io/railwayapp/cli:latest
+  env:
+    SVC_ID: my-service
+    RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+  steps:
+    - uses: actions/checkout@v3
+    - run: railway up --service=${{ env.SVC_ID }}
+```
+
+----------------------------------------
+
+TITLE: Deploying with Railway CLI in GitLab CI/CD
+DESCRIPTION: This YAML configuration defines a GitLab CI/CD job that uses the Railway CLI Docker image for deployment. It sets a service ID variable and then executes `railway up` to deploy the service, leveraging GitLab's CI/CD pipeline.
+SOURCE: https://github.com/railwayapp/cli/blob/master/README.md#_snippet_10
+
+LANGUAGE: yaml
+CODE:
+```
+deploy-job:
+  image: ghcr.io/railwayapp/cli:latest
+  variables:
+    SVC_ID: my-service
+  script:
+    - railway up --service=$SVC_ID
+```
+
+----------------------------------------
+
+TITLE: Installing Railway CLI with Homebrew (macOS/Linux)
+DESCRIPTION: This command installs the Railway CLI using Homebrew, a popular package manager for macOS and Linux. It simplifies the installation process for users on these operating systems.
+SOURCE: https://github.com/railwayapp/cli/blob/master/README.md#_snippet_1
+
+LANGUAGE: bash
+CODE:
+```
+brew install railway
+```
+
+----------------------------------------
+
+TITLE: Installing Railway CLI with NPM (Node.js)
+DESCRIPTION: This command installs the Railway CLI globally using npm, the Node.js package manager. The `-g` flag makes the `railway` command available system-wide.
+SOURCE: https://github.com/railwayapp/cli/blob/master/README.md#_snippet_2
+
+LANGUAGE: bash
+CODE:
+```
+npm install -g @railway/cli
+```
+
+----------------------------------------
+
+TITLE: Installing Railway CLI via Bash Script
+DESCRIPTION: This command installs the Railway CLI by executing a script downloaded directly from `cli.new` using `curl`. This method provides a quick way to get started without a dedicated package manager.
+SOURCE: https://github.com/railwayapp/cli/blob/master/README.md#_snippet_3
+
+LANGUAGE: bash
+CODE:
+```
+bash <(curl -fsSL cli.new)
+```
+
+----------------------------------------
+
+TITLE: Pulling Railway CLI Docker Image
+DESCRIPTION: This command pulls the latest Railway CLI Docker image from GitHub Container Registry. It allows users to run the CLI within a Docker container, providing an isolated environment.
+SOURCE: https://github.com/railwayapp/cli/blob/master/README.md#_snippet_8
+
+LANGUAGE: bash
+CODE:
+```
+docker pull ghcr.io/railwayapp/cli:latest
+```
+
+----------------------------------------
+
+TITLE: Building Railway CLI Binary (Rust)
+DESCRIPTION: This command compiles the Railway CLI project in release mode, optimizing the binary for performance and size. It's used to create a production-ready executable.
+SOURCE: https://github.com/railwayapp/cli/blob/master/CONTRIBUTING.md#_snippet_3
+
+LANGUAGE: Shell
+CODE:
+```
+cargo build --release
+```
+
+----------------------------------------
+
+TITLE: Running Railway CLI Binary (Rust)
+DESCRIPTION: This command executes the Railway CLI binary using Cargo, passing any additional arguments to the application. It's used for testing and running the CLI locally during development.
+SOURCE: https://github.com/railwayapp/cli/blob/master/CONTRIBUTING.md#_snippet_2
+
+LANGUAGE: Shell
+CODE:
+```
+cargo run -- <args>
+```
+
+----------------------------------------
+
+TITLE: Generating GraphQL Schema (Shell)
+DESCRIPTION: This command uses the `graphql-client` tool to introspect the GraphQL schema from the specified Railway API endpoint and saves it to a local JSON file. This is crucial for development and type generation.
+SOURCE: https://github.com/railwayapp/cli/blob/master/CONTRIBUTING.md#_snippet_1
+
+LANGUAGE: Shell
+CODE:
+```
+graphql-client introspect-schema https://backboard.railway.com/graphql/v2 > src/gql/schema.json
+```
+
+----------------------------------------
+
+TITLE: Installing GraphQL Client CLI (Shell)
+DESCRIPTION: This command installs the `graphql-client_cli` tool using Cargo, which is required for interacting with GraphQL schemas. It's a prerequisite for generating the schema.
+SOURCE: https://github.com/railwayapp/cli/blob/master/CONTRIBUTING.md#_snippet_0
+
+LANGUAGE: Shell
+CODE:
+```
+cargo install graphql_client_cli
+```
+
+----------------------------------------
+
+TITLE: Installing Railway CLI with Cargo (Rust)
+DESCRIPTION: This command installs the Railway CLI using Cargo, Rust's package manager. The `--locked` flag ensures that the exact versions specified in `Cargo.lock` are used, providing reproducible builds.
+SOURCE: https://github.com/railwayapp/cli/blob/master/README.md#_snippet_0
+
+LANGUAGE: bash
+CODE:
+```
+cargo install railwayapp --locked
+```
+
+----------------------------------------
+
+TITLE: Installing Railway CLI with Scoop (Windows)
+DESCRIPTION: This command installs the Railway CLI using Scoop, a command-line installer for Windows. It simplifies the management of applications on Windows systems.
+SOURCE: https://github.com/railwayapp/cli/blob/master/README.md#_snippet_5
+
+LANGUAGE: powershell
+CODE:
+```
+scoop install railway
+```
+
+----------------------------------------
+
+TITLE: Entering Nix Development Environment (Nix)
+DESCRIPTION: This command enters a Nix shell environment, providing all necessary dependencies for the Railway CLI project. It simplifies setup by managing prerequisites automatically.
+SOURCE: https://github.com/railwayapp/cli/blob/master/CONTRIBUTING.md#_snippet_4
+
+LANGUAGE: Shell
+CODE:
+```
+nix-shell
+```
+
+----------------------------------------
+
+TITLE: Installing Railway CLI with Yay (Arch Linux AUR)
+DESCRIPTION: This command installs the Railway CLI on Arch Linux using Yay, another popular AUR helper. It simplifies the process of installing packages from the Arch User Repository.
+SOURCE: https://github.com/railwayapp/cli/blob/master/README.md#_snippet_7
+
+LANGUAGE: bash
+CODE:
+```
+yay -S railwayapp-cli
+```
+
+----------------------------------------
+
+TITLE: Installing Railway CLI with Paru (Arch Linux AUR)
+DESCRIPTION: This command installs the Railway CLI on Arch Linux using Paru, an AUR helper. It fetches and builds the `railwayapp-cli` package from the Arch User Repository.
+SOURCE: https://github.com/railwayapp/cli/blob/master/README.md#_snippet_6
+
+LANGUAGE: bash
+CODE:
+```
+paru -S railwayapp-cli
+```
+
+----------------------------------------
+
+TITLE: Uninstalling Railway CLI via Bash Script
+DESCRIPTION: This command uninstalls the Railway CLI by executing the same script from `cli.new` with the `-r` flag. It provides a convenient way to remove the CLI installed via the bash script.
+SOURCE: https://github.com/railwayapp/cli/blob/master/README.md#_snippet_4
+
+LANGUAGE: bash
+CODE:
+```
+bash <(curl -fsSL cli.new) -r
+```
