@@ -1,0 +1,55 @@
+---
+alwaysApply: true
+---
+
+# CSV Merger Project - Cursor Rules
+
+## Project Overview
+This is a CSV processing application for cold email agencies that merges, deduplicates, and standardizes lead data with multi-tenant support.
+
+## Key Documentation Files
+
+### requirements.md
+- Contains all user stories and acceptance criteria
+- Defines what the application should do from user perspective
+- Includes JSON schemas for webhook payloads
+- Lists all features: upload, processing, deduplication, webhook/download options, rate control
+- Has 12 user stories (US-1 through US-12)
+
+### design.md  
+- Technical architecture and system design
+- Component structure and class definitions
+- API endpoint specifications
+- Redis data structures
+- Configuration management details
+- Technology stack: Flask + Redis + Alpine.js + Tailwind
+
+### implementation-plan.md
+- Breaks down development into 24 specific tasks
+- Organized in 7 phases from foundation to polish
+- Each task has clear objectives and implementation details
+- Includes timeline estimates (20-28 days total)
+- Task numbering: TASK-1 through TASK-24
+
+## Project Structure (When Built)
+- **Backend**: Python Flask with Redis queue
+- **Frontend**: Single-page app with Alpine.js + Tailwind
+- **Storage**: Session-based file storage (48h cleanup)
+- **Multi-tenant**: Session isolation, no database needed
+- **Processing**: Smart CSV merging with fuzzy header matching
+
+## Key Features
+- Upload multiple CSVs and merge them
+- Two processing modes: webhook delivery OR CSV download
+- Smart deduplication that combines data from duplicates
+- Domain cleaning (removes https, www, etc.)
+- Configurable field mappings in JSON files
+- Real-time progress tracking
+- 48-hour auto-cleanup
+
+## When Implementing
+- Follow the spec-driven approach: requirements → design → implementation
+- Use the task numbers from implementation-plan.md to track progress
+- All session-based features must include session isolation
+- Configuration should be easily editable in JSON files
+- Always implement both webhook AND download options

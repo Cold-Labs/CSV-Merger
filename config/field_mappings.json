@@ -1,0 +1,38 @@
+{
+  "company_mappings": {
+    "Company Name": ["company name", "business name", "organization", "company", "firm", "corp", "enterprise"],
+    "Company Domain": ["domain", "website", "url", "web site", "company domain", "site", "company website"],
+    "Company Description": ["description", "about", "company description", "business description", "company info"],
+    "Industry": ["industry", "sector", "business type", "category", "vertical", "field"],
+    "Company Employee Count": ["employees", "employee count", "staff size", "team size", "headcount", "company size"],
+    "Company LinkedIn": ["linkedin", "linkedin url", "company linkedin", "linkedin page", "li url"],
+    "Company LinkedIn Handle": ["linkedin handle", "linkedin username", "handle", "li handle"],
+    "Year Founded": ["founded", "year founded", "established", "inception", "started", "founding year"],
+    "Company Location": ["location", "address", "city", "headquarters", "hq", "company location"]
+  },
+  "people_mappings": {
+    "First Name": ["first name", "fname", "given name", "first", "firstname", "f name"],
+    "Last Name": ["last name", "lname", "surname", "family name", "last", "lastname", "l name"],
+    "Full Name": ["full name", "name", "contact name", "person name", "fullname", "complete name"],
+    "Job Title": ["title", "job title", "position", "role", "designation", "job", "occupation"],
+    "LinkedIn Profile": ["linkedin", "linkedin profile", "linkedin url", "profile", "li url", "li profile"],
+    "Person Location": ["location", "city", "address", "person location", "based in", "lives in"],
+    "Company Name": ["company", "company name", "organization", "employer", "workplace", "firm"],
+    "Company Description": ["company description", "about company", "description", "company info"],
+    "Company Website": ["website", "company website", "url", "domain", "company url", "site"],
+    "Company LinkedIn URL": ["company linkedin", "linkedin company", "company linkedin url", "company li"],
+    "Company Employee Count": ["employees", "company size", "employee count", "staff size", "headcount"],
+    "Company Location": ["company location", "company address", "company city", "hq", "headquarters"],
+    "Company Revenue": ["revenue", "company revenue", "annual revenue", "turnover", "sales"]
+  },
+  "data_cleaning_rules": {
+    "domain_prefixes_to_remove": ["https://", "http://", "www.", "www2.", "m.", "mobile."],
+    "domain_suffixes_to_remove": ["/", "/#", "?", "#"],
+    "normalize_whitespace": true,
+    "remove_extra_spaces": true,
+    "standardize_case": {
+      "domains": "lowercase",
+      "names": "title_case"
+    }
+  }
+} 

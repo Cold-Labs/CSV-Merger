@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Test - CSV Merger</title>
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .panel {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .log {
+            background: #1a1a1a;
+            color: #00ff00;
+            font-family: monospace;
+            padding: 15px;
+            border-radius: 4px;
+            height: 400px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .status.connected { background: #d4edda; color: #155724; }
+        .status.disconnected { background: #f8d7da; color: #721c24; }
+        .status.error { background: #fff3cd; color: #856404; }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #6c757d; cursor: not-allowed; }
+        input, select {
+            width: 100%;
+            padding: 8px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(to right, #007bff, #28a745);
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+        .job-item {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔌 WebSocket Test - CSV Merger</h1>
+    
+    <div class="container">
+        <!-- Connection Panel -->
+        <div class="panel">
+            <h3>Connection Status</h3>
+            <div id="connectionStatus" class="status disconnected">Disconnected</div>
+            <button id="connectBtn" onclick="connectSocket()">Connect</button>
+            <button id="disconnectBtn" onclick="disconnectSocket()" disabled>Disconnect</button>
+            <button onclick="pingServer()">Ping Server</button>
+            
+            <h4>Session Info</h4>
+            <div id="sessionInfo"></div>
+            
+            <h4>Test Actions</h4>
+            <button onclick="getSessionJobs()">Get Session Jobs</button>
+            <button onclick="joinJob()">Join Job (Test)</button>
+            <button onclick="submitTestJob()">Submit Test Job</button>
+        </div>
+        
+        <!-- Job Progress Panel -->
+        <div class="panel">
+            <h3>Job Progress</h3>
+            <div id="currentJob"></div>
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill"></div>
+            </div>
+            <div id="progressText">No active job</div>
+            
+            <h4>Active Jobs</h4>
+            <div id="jobsList"></div>
+        </div>
+    </div>
+    
+    <!-- Event Log -->
+    <div class="panel">
+        <h3>Event Log</h3>
+        <button onclick="clearLog()">Clear Log</button>
+        <div id="eventLog" class="log"></div>
+    </div>
+
+    <script>
+        let socket = null;
+        let sessionId = null;
+        let currentJobId = null;
+
+        function log(message, type = 'info') {
+            const timestamp = new Date().toISOString();
+            const logDiv = document.getElementById('eventLog');
+            const color = type === 'error' ? '#ff6b6b' : type === 'success' ? '#51cf66' : '#00ff00';
+            logDiv.innerHTML += `<div style="color: ${color}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateConnectionStatus(status, message) {
+            const statusDiv = document.getElementById('connectionStatus');
+            statusDiv.className = `status ${status}`;
+            statusDiv.textContent = message;
+            
+            document.getElementById('connectBtn').disabled = status === 'connected';
+            document.getElementById('disconnectBtn').disabled = status !== 'connected';
+        }
+
+        function connectSocket() {
+            if (socket) {
+                socket.disconnect();
+            }
+
+            log('Connecting to WebSocket server...');
+            socket = io();
+
+            socket.on('connect', function() {
+                log('✅ Connected to WebSocket server', 'success');
+                updateConnectionStatus('connected', 'Connected');
+            });
+
+            socket.on('disconnect', function() {
+                log('❌ Disconnected from WebSocket server', 'error');
+                updateConnectionStatus('disconnected', 'Disconnected');
+            });
+
+            socket.on('connected', function(data) {
+                log(`🎉 Session established: ${JSON.stringify(data)}`, 'success');
+                sessionId = data.session_id;
+                document.getElementById('sessionInfo').innerHTML = `
+                    <strong>Session ID:</strong> ${data.session_id}<br>
+                    <strong>Connected:</strong> ${data.timestamp}
+                `;
+            });
+
+            socket.on('error', function(data) {
+                log(`❌ Error: ${JSON.stringify(data)}`, 'error');
+            });
+
+            socket.on('pong', function(data) {
+                log(`🏓 Pong received: ${JSON.stringify(data)}`);
+            });
+
+            socket.on('job_progress', function(data) {
+                log(`📊 Job Progress: ${JSON.stringify(data)}`, 'success');
+                updateJobProgress(data);
+            });
+
+            socket.on('job_status_change', function(data) {
+                log(`🔄 Job Status Change: ${JSON.stringify(data)}`, 'success');
+                updateJobStatus(data);
+            });
+
+            socket.on('session_jobs', function(data) {
+                log(`📋 Session Jobs: ${JSON.stringify(data)}`);
+                updateJobsList(data);
+            });
+
+            socket.on('job_status', function(data) {
+                log(`📄 Job Status: ${JSON.stringify(data)}`);
+            });
+        }
+
+        function disconnectSocket() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+        }
+
+        function pingServer() {
+            if (socket) {
+                log('🏓 Sending ping...');
+                socket.emit('ping');
+            } else {
+                log('❌ Not connected', 'error');
+            }
+        }
+
+        function getSessionJobs() {
+            if (socket) {
+                log('📋 Requesting session jobs...');
+                socket.emit('get_session_jobs');
+            } else {
+                log('❌ Not connected', 'error');
+            }
+        }
+
+        function joinJob() {
+            const jobId = prompt('Enter Job ID to join:');
+            if (jobId && socket) {
+                log(`🔗 Joining job: ${jobId}`);
+                socket.emit('join_job', { job_id: jobId });
+                currentJobId = jobId;
+            }
+        }
+
+        function submitTestJob() {
+            if (!sessionId) {
+                log('❌ No session available', 'error');
+                return;
+            }
+
+            log('🚀 Submitting test job...');
+            
+            // Submit job via API
+            fetch('/api/jobs', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    table_type: 'company',
+                    processing_mode: 'download',
+                    webhook_rate_limit: 10
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    log(`✅ Job submitted: ${data.job_id}`, 'success');
+                    currentJobId = data.job_id;
+                    
+                    // Join the job for real-time updates
+                    if (socket) {
+                        socket.emit('join_job', { job_id: data.job_id });
+                    }
+                } else {
+                    log(`❌ Job submission failed: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                log(`❌ Job submission error: ${error}`, 'error');
+            });
+        }
+
+        function updateJobProgress(data) {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            
+            if (data.percentage !== undefined) {
+                progressFill.style.width = `${data.percentage}%`;
+            }
+            
+            progressText.innerHTML = `
+                <strong>Job:</strong> ${data.job_id}<br>
+                <strong>Stage:</strong> ${data.stage || 'Unknown'}<br>
+                <strong>Message:</strong> ${data.message}<br>
+                <strong>Progress:</strong> ${data.percentage || 0}%
+            `;
+        }
+
+        function updateJobStatus(data) {
+            const currentJobDiv = document.getElementById('currentJob');
+            currentJobDiv.innerHTML = `
+                <div class="job-item">
+                    <strong>Job ID:</strong> ${data.job_id}<br>
+                    <strong>Status:</strong> ${data.old_status} → ${data.new_status}<br>
+                    <strong>Updated:</strong> ${data.timestamp}
+                </div>
+            `;
+        }
+
+        function updateJobsList(data) {
+            const jobsListDiv = document.getElementById('jobsList');
+            if (data.jobs && data.jobs.length > 0) {
+                jobsListDiv.innerHTML = data.jobs.map(job => `
+                    <div class="job-item" onclick="joinJobById('${job.job_id}')">
+                        <strong>ID:</strong> ${job.job_id}<br>
+                        <strong>Status:</strong> ${job.status}<br>
+                        <strong>Created:</strong> ${job.created_at}
+                    </div>
+                `).join('');
+            } else {
+                jobsListDiv.innerHTML = '<div class="job-item">No jobs found</div>';
+            }
+        }
+
+        function joinJobById(jobId) {
+            if (socket) {
+                log(`🔗 Joining job: ${jobId}`);
+                socket.emit('join_job', { job_id: jobId });
+                currentJobId = jobId;
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('eventLog').innerHTML = '';
+        }
+
+        // Auto-connect on page load
+        window.addEventListener('load', function() {
+            log('🌐 Page loaded, connecting...');
+            connectSocket();
+        });
+    </script>
+</body>
+</html> 
