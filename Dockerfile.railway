@@ -1,0 +1,37 @@
+# Railway-optimized Dockerfile for CSV Merger
+FROM python:3.13-slim
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV FLASK_ENV=production
+
+# Set work directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p temp_uploads exports logs
+
+# Create non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+RUN chown -R appuser:appuser /app
+USER appuser
+
+# Expose port (Railway will set PORT env var)
+EXPOSE 5001
+
+# Start the application with RQ worker
+CMD ["python", "-c", "import subprocess, os; subprocess.Popen(['python', '-m', 'rq.cli', 'worker', '--url', os.getenv('REDIS_URL', 'redis://localhost:6379/0'), 'csv_processing']); exec(open('app.py').read())"] 
