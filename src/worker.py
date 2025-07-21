@@ -46,9 +46,11 @@ class CSVWorker:
         self.config_manager = ConfigManager(self.config.FIELD_MAPPINGS_FILE)
         self.job_manager = JobManager(redis_connection, self.config)
         
-        # Create RQ worker
+        # Create RQ worker with explicit queue
+        from rq import Queue
+        self.queue = Queue('csv_processing', connection=redis_connection)
         self.worker = Worker(
-            ['csv_processing'], 
+            [self.queue], 
             connection=redis_connection,
             name=self.worker_name
         )
@@ -385,7 +387,12 @@ class WorkerManager:
         
         try:
             # Create Redis connection
-            redis_connection = redis.from_url(self.redis_url)
+            redis_connection = redis.from_url(
+                self.redis_url, 
+                decode_responses=True,
+                encoding='utf-8',
+                encoding_errors='replace'
+            )
             redis_connection.ping()
             
             # Create and start workers

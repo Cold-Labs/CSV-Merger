@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>CSV Merger - Professional Lead Processing</title>
     
     <!-- Tailwind CSS -->
@@ -460,7 +463,7 @@
                             <div class="text-xs text-gray-500">Sources Merged</div>
                         </div>
                         <div class="bg-blue-50 rounded-lg p-4 text-center">
-                            <div class="text-2xl font-bold text-blue-600" x-text="currentJob?.progress?.stats?.duplicates_removed || 0"></div>
+                            <div class="text-2xl font-bold text-blue-600" x-text="currentJob?.progress?.duplicates_removed || 0"></div>
                             <div class="text-xs text-gray-500">Duplicates Removed</div>
                         </div>
                         <div class="bg-purple-50 rounded-lg p-4 text-center">
@@ -776,7 +779,8 @@
                         this.addNotification('Uploading files...', 'info');
                         const uploadResponse = await fetch('/api/upload', {
                             method: 'POST',
-                            body: formData
+                            body: formData,
+                            credentials: 'same-origin'
                         });
 
                         if (!uploadResponse.ok) {
@@ -800,7 +804,8 @@
                             headers: {
                                 'Content-Type': 'application/json',
                             },
-                            body: JSON.stringify(jobData)
+                            body: JSON.stringify(jobData),
+                            credentials: 'same-origin'
                         });
 
                         if (!jobResponse.ok) {
@@ -837,7 +842,8 @@
 
                     try {
                         const response = await fetch(`/api/jobs/${this.currentJob.job_id}/cancel`, {
-                            method: 'POST'
+                            method: 'POST',
+                            credentials: 'same-origin'
                         });
 
                         if (response.ok) {
@@ -861,7 +867,8 @@
                             },
                             body: JSON.stringify({
                                 rate_limit: parseInt(this.adjustedRateLimit)
-                            })
+                            }),
+                            credentials: 'same-origin'
                         });
 
                         if (response.ok) {
@@ -876,7 +883,9 @@
                     if (!this.currentJob || this.currentJob.status !== 'completed') return;
 
                     try {
-                        const response = await fetch(`/api/jobs/${this.currentJob.job_id}/download`);
+                        const response = await fetch(`/api/jobs/${this.currentJob.job_id}/download`, {
+                            credentials: 'same-origin'
+                        });
                         if (response.ok) {
                             const blob = await response.blob();
                             const url = window.URL.createObjectURL(blob);
@@ -899,7 +908,9 @@
 
                 async downloadJob(jobId) {
                     try {
-                        const response = await fetch(`/api/jobs/${jobId}/download`);
+                        const response = await fetch(`/api/jobs/${jobId}/download`, {
+                            credentials: 'same-origin'
+                        });
                         if (response.ok) {
                             const blob = await response.blob();
                             const url = window.URL.createObjectURL(blob);
@@ -948,7 +959,8 @@
                             },
                             body: JSON.stringify({
                                 webhook_url: this.config.webhookUrl
-                            })
+                            }),
+                            credentials: 'same-origin'
                         });
 
                         const result = await response.json();

@@ -307,8 +307,16 @@ class CSVProcessor:
         
         for i, file_path in enumerate(file_paths):
             try:
-                # Read CSV file
-                df = pd.read_csv(file_path)
+                # Read CSV file with encoding fallback
+                try:
+                    df = pd.read_csv(file_path, encoding='utf-8')
+                except UnicodeDecodeError:
+                    try:
+                        df = pd.read_csv(file_path, encoding='latin-1')
+                        logger.warning(f"File {file_path} read with latin-1 encoding")
+                    except UnicodeDecodeError:
+                        df = pd.read_csv(file_path, encoding='cp1252')
+                        logger.warning(f"File {file_path} read with cp1252 encoding")
                 logger.info(f"Read file {file_path}: {len(df)} records, {len(df.columns)} columns")
                 
                 # Map headers to standard names

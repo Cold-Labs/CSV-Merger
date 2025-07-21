@@ -60,15 +60,15 @@ class Config:
     # Worker Configuration
     WORKER_PROCESSES = int(os.getenv('WORKER_PROCESSES', '2'))
     
-    @property
-    def MAX_FILE_SIZE_BYTES(self) -> int:
+    @classmethod
+    def get_max_file_size_bytes(cls) -> int:
         """Maximum file size in bytes"""
-        return self.MAX_FILE_SIZE_MB * 1024 * 1024
+        return cls.MAX_FILE_SIZE_MB * 1024 * 1024
     
-    @property
-    def MAX_STORAGE_PER_SESSION_BYTES(self) -> int:
+    @classmethod
+    def get_max_storage_per_session_bytes(cls) -> int:
         """Maximum storage per session in bytes"""
-        return self.MAX_STORAGE_PER_SESSION_MB * 1024 * 1024
+        return cls.MAX_STORAGE_PER_SESSION_MB * 1024 * 1024
     
     @classmethod
     def get_redis_config(cls) -> Dict[str, Any]:
@@ -127,12 +127,18 @@ class Config:
         """Get Flask application configuration"""
         return {
             'SECRET_KEY': cls.SECRET_KEY,
-            'MAX_CONTENT_LENGTH': cls.MAX_FILE_SIZE_BYTES,
+            'MAX_CONTENT_LENGTH': cls.get_max_file_size_bytes(),
             'UPLOAD_FOLDER': cls.TEMP_UPLOAD_DIR,
             'JSON_SORT_KEYS': False,
             'JSONIFY_PRETTYPRINT_REGULAR': not cls.IS_PRODUCTION,
             'TESTING': cls.IS_TESTING,
-            'DEBUG': cls.FLASK_DEBUG
+            'DEBUG': cls.FLASK_DEBUG,
+            # Session cookie configuration for localhost
+            'SESSION_COOKIE_HTTPONLY': True,
+            'SESSION_COOKIE_SECURE': False,  # False for HTTP localhost
+            'SESSION_COOKIE_SAMESITE': 'Lax',
+            'SESSION_COOKIE_DOMAIN': None,  # Allow any domain (localhost)
+            'PERMANENT_SESSION_LIFETIME': 1800  # 30 minutes
         }
     
     @classmethod
@@ -154,4 +160,10 @@ class Config:
                     'formatter': 'default'
                 }
             }
-        } 
+        }
+    
+    @staticmethod
+    def get_current_timestamp() -> str:
+        """Get current timestamp in ISO format"""
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat() 

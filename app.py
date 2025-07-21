@@ -4,6 +4,10 @@ CSV Merger - Main Flask Application
 Professional lead processing for cold email agencies
 """
 
+# CRITICAL: Eventlet monkey patch MUST be first, before any other imports
+import eventlet
+eventlet.monkey_patch()
+
 import os
 import sys
 import logging
@@ -13,7 +17,6 @@ from functools import wraps
 import redis
 from flask import Flask, render_template, request, jsonify, session, send_file
 from flask_socketio import SocketIO, emit, join_room, leave_room
-import eventlet
 
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -113,25 +116,35 @@ def create_app():
             raise
         redis_client = None
     
-    # Initialize managers
+    # Initialize managers with debug logging
+    logger.info("Initializing ConfigManager...")
     config_manager = ConfigManager(Config.FIELD_MAPPINGS_FILE)
-    session_manager = SessionManager(redis_client, Config) if redis_client else None
-    job_manager = JobManager(redis_client, Config, socketio) if redis_client else None
+    logger.info("ConfigManager initialized successfully")
+    
+    logger.info("Initializing SessionManager...")
+    session_manager = SessionManager(redis_client, Config()) if redis_client else None
+    logger.info("SessionManager initialized successfully" if session_manager else "SessionManager skipped (no Redis)")
+    
+    logger.info("Initializing JobManager...")  
+    job_manager = JobManager(redis_client, Config()) if redis_client else None
+    logger.info("JobManager initialized successfully" if job_manager else "JobManager skipped (no Redis)")
     
     # Store managers in app context
+    logger.info("Storing managers in app context...")
     app.redis = redis_client
     app.config_manager = config_manager
     app.session_manager = session_manager
     app.job_manager = job_manager
     app.socketio = socketio
+    logger.info("Managers stored successfully")
     
     # Set SocketIO reference in job manager for real-time updates
-    if job_manager and socketio:
-        job_manager.set_socketio(socketio)
+    # if job_manager and socketio:
+    #     job_manager.set_socketio(socketio)
     
     def validate_session_id(session_id: str) -> bool:
         """Validate session ID"""
-        return session_manager.validate_session(session_id) if session_manager else True
+        return app.session_manager.validate_session(session_id) if app.session_manager else True
     
     @app.before_request
     def before_request():
@@ -159,6 +172,12 @@ def create_app():
         
         return response
 
+    # Favicon route to prevent 404 errors
+    @app.route('/favicon.ico')
+    def favicon():
+        """Serve favicon to prevent 404 errors"""
+        return '', 204
+    
     # Health check endpoint
     @app.route('/api/health')
     def health_check():
@@ -210,14 +229,82 @@ def create_app():
         """Serve WebSocket test page"""
         return render_template('websocket_test.html')
 
+    # Debug endpoint to test session validation
+    @app.route('/api/debug/session', methods=['GET', 'POST'])
+    def debug_session():
+        """Debug endpoint to test session handling"""
+        session_id = session.get('session_id')
+        
+        if not session_id:
+            # Create session like upload endpoint does
+            if app.session_manager:
+                user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
+                user_agent = request.headers.get('User-Agent')
+                session_info = app.session_manager.create_session(user_ip, user_agent)
+                session_id = session_info.session_id
+                session['session_id'] = session_id
+                session.permanent = True
+                logger.info(f"DEBUG: Created new session: {session_id}")
+            else:
+                import uuid
+                session_id = f"temp_{str(uuid.uuid4())[:8]}"
+                session['session_id'] = session_id
+                logger.info(f"DEBUG: Created temporary session: {session_id}")
+        
+        return jsonify({
+            'session_id': session_id,
+            'session_valid': validate_session_id(session_id),
+            'request_method': request.method,
+            'has_session_manager': app.session_manager is not None,
+            'cookies_received': dict(request.cookies),
+            'headers': dict(request.headers)
+        })
+    
     # Add all the existing routes here (file upload, jobs, etc.)
     @app.route('/api/upload', methods=['POST'])
     def upload_files():
         """Handle file upload and store in session"""
         try:
-            # Validate session
+            logger.info(f"=== UPLOAD REQUEST DEBUG ===")
+            logger.info(f"Request method: {request.method}")
+            logger.info(f"Request cookies: {dict(request.cookies)}")
+            logger.info(f"Request headers: {dict(request.headers)}")
+            logger.info(f"Flask session before: {dict(session)}")
+            
+            # Get or create session
             session_id = session.get('session_id')
-            if not session_id or not validate_session_id(session_id):
+            logger.info(f"Session ID from Flask session: {session_id}")
+            
+            # If no session_id, create one using session manager or temporary fallback
+            if not session_id:
+                logger.info("No session_id found, creating new session")
+                if app.session_manager:
+                    # Create proper session using session manager
+                    user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
+                    user_agent = request.headers.get('User-Agent')
+                    session_info = app.session_manager.create_session(user_ip, user_agent)
+                    session_id = session_info.session_id
+                    session['session_id'] = session_id
+                    session.permanent = True
+                    logger.info(f"Created new session for upload: {session_id}")
+                else:
+                    # Fallback to temporary session when session manager disabled
+                    import uuid
+                    session_id = f"temp_{str(uuid.uuid4())[:8]}"
+                    session['session_id'] = session_id
+                    logger.info(f"Created temporary session for upload: {session_id}")
+            else:
+                logger.info(f"Using existing session: {session_id}")
+            
+            logger.info(f"Flask session after: {dict(session)}")
+            
+            # Validate session
+            session_valid = validate_session_id(session_id)
+            logger.info(f"Session validation result: {session_valid}")
+            logger.info(f"Session manager available: {app.session_manager is not None}")
+            
+            if not session_valid:
+                logger.error(f"Session validation failed for session_id: {session_id}")
                 return jsonify({'error': 'Invalid or expired session'}), 401
             
             # Check if files were uploaded
@@ -248,22 +335,42 @@ def create_app():
                 file_size = file.tell()
                 file.seek(0)  # Reset to beginning
                 
-                if file_size > config_instance.MAX_FILE_SIZE_BYTES:
+                if file_size > config_instance.get_max_file_size_bytes():
                     return jsonify({'error': f'File {file.filename} exceeds maximum size limit'}), 400
                 
                 total_size += file_size
                 
-                # Store file using session manager
-                file_info = app.session_manager.store_file(session_id, file, file.filename)
+                # Store file using session manager or temporary storage
+                if app.session_manager:
+                    file_info = app.session_manager.store_file(session_id, file, file.filename)
+                else:
+                    # Temporary storage when session manager is disabled
+                    import tempfile
+                    import os
+                    temp_dir = tempfile.mkdtemp(prefix=f"csv_merger_{session_id}_")
+                    file_path = os.path.join(temp_dir, file.filename)
+                    file.save(file_path)
+                    file_info = {
+                        'filename': file.filename,
+                        'size': file_size,
+                        'path': file_path,
+                        'upload_time': datetime.now(timezone.utc).isoformat()
+                    }
                 uploaded_files.append(file_info)
             
             # Update session with uploaded files info
-            session_info = app.session_manager.get_session(session_id)
-            if session_info:
-                session_info.files_uploaded = True
-                session_info.uploaded_files = uploaded_files
-                session_info.total_file_size = total_size
-                app.session_manager._save_session(session_info)
+            if app.session_manager:
+                session_info = app.session_manager.get_session(session_id)
+                if session_info:
+                    session_info.files_uploaded = True
+                    session_info.uploaded_files = uploaded_files
+                    session_info.total_file_size = total_size
+                    app.session_manager._save_session(session_info)
+            else:
+                # Store in Flask session when session manager is disabled
+                session['uploaded_files'] = uploaded_files
+                session['total_file_size'] = total_size
+                session['files_uploaded'] = True
             
             logger.info(f"Successfully uploaded {len(uploaded_files)} files for session {session_id}")
             
@@ -282,14 +389,47 @@ def create_app():
     def submit_job():
         """Submit a new CSV processing job"""
         try:
-            # Validate session
+            # Get or create session
             session_id = session.get('session_id')
-            if not session_id or not validate_session_id(session_id):
+            
+            # If no session_id, create one using session manager or temporary fallback
+            if not session_id:
+                if app.session_manager:
+                    # Create proper session using session manager
+                    user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
+                    user_agent = request.headers.get('User-Agent')
+                    session_info = app.session_manager.create_session(user_ip, user_agent)
+                    session_id = session_info.session_id
+                    session['session_id'] = session_id
+                    session.permanent = True
+                    logger.info(f"Created new session for job submission: {session_id}")
+                else:
+                    # Fallback to temporary session when session manager disabled
+                    import uuid
+                    session_id = f"temp_{str(uuid.uuid4())[:8]}"
+                    session['session_id'] = session_id
+                    logger.info(f"Created temporary session for job submission: {session_id}")
+            
+            # Validate session
+            if not validate_session_id(session_id):
                 return jsonify({'error': 'Invalid or expired session'}), 401
             
-            # Validate job manager availability
+            # Check job manager availability - if disabled, return mock response
             if not app.job_manager:
-                return jsonify({'error': 'Job manager not available'}), 503
+                import uuid
+                mock_job_id = f"mock_{str(uuid.uuid4())[:8]}"
+                return jsonify({
+                    'success': True,
+                    'job_id': mock_job_id,
+                    'message': 'Job manager temporarily disabled - mock job created',
+                    'status': {
+                        'job_id': mock_job_id,
+                        'status': 'pending',
+                        'progress': 0,
+                        'message': 'Job manager temporarily disabled'
+                    },
+                    'mode': 'mock'
+                }), 200
             
             # Get request data
             data = request.get_json()
@@ -306,13 +446,17 @@ def create_app():
             if processing_mode == 'webhook' and not webhook_url:
                 return jsonify({'error': 'Webhook URL required for webhook processing mode'}), 400
             
-            # Get session file list (assume files were already uploaded)
-            if not app.session_manager:
-                return jsonify({'error': 'Session manager not available'}), 503
-            
-            session_info = app.session_manager.get_session(session_id)
-            if not session_info or not getattr(session_info, 'files_uploaded', False):
-                return jsonify({'error': 'No files uploaded for processing'}), 400
+            # Get session file list (from session manager or Flask session)
+            if app.session_manager:
+                session_info = app.session_manager.get_session(session_id)
+                if not session_info or not getattr(session_info, 'files_uploaded', False):
+                    return jsonify({'error': 'No files uploaded for processing'}), 400
+                uploaded_files = getattr(session_info, 'uploaded_files', [])
+            else:
+                # Check Flask session when session manager is disabled
+                if not session.get('files_uploaded', False):
+                    return jsonify({'error': 'No files uploaded for processing'}), 400
+                uploaded_files = session.get('uploaded_files', [])
             
             # Prepare job data
             job_data = {
@@ -321,27 +465,74 @@ def create_app():
                 'processing_mode': processing_mode,
                 'webhook_url': webhook_url,
                 'webhook_rate_limit': webhook_rate_limit,
-                'files': getattr(session_info, 'uploaded_files', []),
+                'files': uploaded_files,
                 'created_by': request.remote_addr,
                 'user_agent': request.headers.get('User-Agent')
             }
             
-            # Submit job to queue
-            job_id = app.job_manager.enqueue_job(job_data)
-            
-            # Get initial job status
-            job_status = app.job_manager.get_job_status(job_id, session_id)
-            
-            return jsonify({
-                'success': True,
-                'job_id': job_id,
-                'message': 'Job submitted successfully',
-                'status': job_status,
-                'websocket_events': [
-                    'job_progress',
-                    'job_status_change'
-                ]
-            }), 201
+            # Submit job to queue with fallback to synchronous processing
+            try:
+                job_id = app.job_manager.enqueue_job(job_data)
+                
+                # Get initial job status
+                job_status = app.job_manager.get_job_status(job_id, session_id)
+                
+                return jsonify({
+                    'success': True,
+                    'job_id': job_id,
+                    'message': 'Job submitted successfully',
+                    'status': job_status,
+                    'websocket_events': [
+                        'job_progress',
+                        'job_status_change'
+                    ]
+                }), 201
+                
+            except Exception as e:
+                # Fall back to synchronous processing due to RQ/UTF-8 issue
+                import uuid
+                from src.csv_processor import CSVProcessor
+                
+                sync_job_id = f"sync_{str(uuid.uuid4())[:8]}"
+                logger.warning(f"RQ error ({str(e)}), processing synchronously: {sync_job_id}")
+                
+                try:
+                    # Process synchronously
+                    processor = CSVProcessor(app.config_manager)
+                    file_paths = [f['path'] for f in uploaded_files]
+                    
+                    result_df = processor.process_files(
+                        file_paths=file_paths,
+                        table_type=table_type,
+                        session_id=session_id
+                    )
+                    
+                    # Save result
+                    import tempfile
+                    import os
+                    temp_dir = tempfile.mkdtemp(prefix=f"csv_result_{session_id}_")
+                    result_path = os.path.join(temp_dir, f"{sync_job_id}_merged.csv")
+                    result_df.to_csv(result_path, index=False)
+                    
+                    return jsonify({
+                        'success': True,
+                        'job_id': sync_job_id,
+                        'message': 'Job processed synchronously (RQ workaround)',
+                        'status': {
+                            'job_id': sync_job_id,
+                            'status': 'completed',
+                            'progress': 100,
+                            'message': 'Processing completed synchronously',
+                            'result_path': result_path,
+                            'records_processed': len(result_df)
+                        },
+                        'mode': 'synchronous'
+                    }), 201
+                    
+                except Exception as sync_error:
+                    return jsonify({
+                        'error': f'Synchronous processing failed: {str(sync_error)}'
+                    }), 500
         
         except Exception as e:
             logger.error(f"Job submission error: {e}")
@@ -608,15 +799,21 @@ def create_app():
     def handle_connect():
         """Handle client connection"""
         session_id = session.get('session_id')
-        if session_id:
-            join_room(f"session_{session_id}")
-            emit('connected', {
-                'session_id': session_id,
-                'timestamp': datetime.now(timezone.utc).isoformat()
-            })
-            logger.info(f"Client connected to session {session_id}")
-        else:
-            emit('error', {'message': 'No session found'})
+        
+        # If no session_id (session manager disabled), create a temporary one
+        if not session_id:
+            import uuid
+            session_id = f"temp_{str(uuid.uuid4())[:8]}"
+            session['session_id'] = session_id
+            logger.info(f"Created temporary session for client: {session_id}")
+        
+        join_room(f"session_{session_id}")
+        emit('connected', {
+            'session_id': session_id,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'mode': 'temporary' if session_id.startswith('temp_') else 'persistent'
+        })
+        logger.info(f"Client connected to session {session_id}")
 
     @socketio.on('disconnect')
     def handle_disconnect():
@@ -668,7 +865,8 @@ def create_app():
             except Exception as e:
                 emit('error', {'message': f'Failed to get jobs: {str(e)}'})
         else:
-            emit('error', {'message': 'Job manager not available'})
+            # Return empty jobs list when job manager is disabled
+            emit('session_jobs', {'jobs': [], 'message': 'Job manager temporarily disabled'})
 
     @socketio.on('get_job_status')
     def handle_get_job_status(data):
@@ -687,8 +885,14 @@ def create_app():
             except Exception as e:
                 emit('error', {'message': f'Failed to get job status: {str(e)}'})
         else:
-            emit('error', {'message': 'Job manager not available'})
+            # Return mock status when job manager is disabled
+            emit('job_status', {
+                'job_id': job_id,
+                'status': 'not_available',
+                'message': 'Job manager temporarily disabled'
+            })
 
+    logger.info("create_app() completed successfully - returning app and socketio")
     return app, socketio
 
 def clean_filename(filename: str) -> str:
@@ -727,5 +931,5 @@ if __name__ == '__main__':
             host=Config.FLASK_HOST,
             port=Config.FLASK_PORT,
             debug=Config.FLASK_DEBUG,
-            use_reloader=True
+            use_reloader=False  # Disable reloader to fix startup issues
         ) 

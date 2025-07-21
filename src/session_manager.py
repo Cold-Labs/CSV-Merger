@@ -65,7 +65,7 @@ class SessionManager:
         
         # Configuration values - use config instance for properties
         self.session_ttl = config_instance.SESSION_TTL_SECONDS
-        self.max_storage_per_session = config_instance.MAX_FILE_SIZE_BYTES  # Use the bytes property
+        self.max_storage_per_session = config_instance.get_max_storage_per_session_bytes()  # Use the bytes method
         self.max_files_per_session = Config.MAX_FILES_PER_SESSION
         self.max_concurrent_jobs = Config.MAX_CONCURRENT_JOBS_PER_SESSION
         self.upload_dir = Config.TEMP_UPLOAD_DIR

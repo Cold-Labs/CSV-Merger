@@ -36,6 +36,7 @@ class JobManager:
         self.session_prefix = "session:"
         self.job_ttl = 86400  # 24 hours
         self.session_ttl = 172800  # 48 hours
+        self.job_timeout = 1800  # 30 minutes job timeout
         
         logger.info("Job Manager initialized with Redis queue")
     
@@ -713,7 +714,7 @@ def process_csv_job(job_data: Dict[str, Any]) -> Dict[str, Any]:
                 import redis
                 from config.settings import Config
                 
-                redis_client = redis.from_url(Config.REDIS_URL)
+                redis_client = redis.from_url(Config.REDIS_URL, decode_responses=True)
                 job_manager = JobManager(redis_client, Config)
                 job_manager.update_progress(job_id, session_id, progress_data)
             except Exception as e:
@@ -765,7 +766,7 @@ def process_csv_job(job_data: Dict[str, Any]) -> Dict[str, Any]:
             import redis
             from config.settings import Config
             
-            redis_client = redis.from_url(Config.REDIS_URL)
+            redis_client = redis.from_url(Config.REDIS_URL, decode_responses=True)
             job_manager = JobManager(redis_client, Config)
             job_manager.update_progress(job_id, session_id, {
                 'message': f'Processing failed: {str(e)}',
@@ -784,7 +785,7 @@ def start_worker():
     from config.settings import Config
     
     # Connect to Redis
-    redis_connection = redis.from_url(Config.REDIS_URL)
+    redis_connection = redis.from_url(Config.REDIS_URL, decode_responses=True)
     
     # Create worker
     worker = Worker(['csv_processing'], connection=redis_connection)

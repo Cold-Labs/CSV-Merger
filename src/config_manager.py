@@ -360,15 +360,20 @@ class ConfigManager:
     def _setup_file_watcher(self):
         """Setup file system watcher for hot-reload"""
         try:
-            self.observer = Observer()
-            event_handler = ConfigFileHandler(self)
+            # TODO: Fix file watcher threading issue - temporarily disabled
+            logging.info("File watcher temporarily disabled to fix startup hang")
+            return
             
-            # Watch the config directory
-            config_dir = os.path.dirname(self.config_file)
-            self.observer.schedule(event_handler, config_dir, recursive=False)
-            self.observer.start()
-            
-            logging.info(f"File watcher setup for {config_dir}")
+            # This code hangs on startup - debugging needed
+            # self.observer = Observer()
+            # event_handler = ConfigFileHandler(self)
+            # 
+            # # Watch the config directory
+            # config_dir = os.path.dirname(self.config_file)
+            # self.observer.schedule(event_handler, config_dir, recursive=False)
+            # self.observer.start()
+            # 
+            # logging.info(f"File watcher setup for {config_dir}")
         except Exception as e:
             logging.error(f"Failed to setup file watcher: {e}")
     
