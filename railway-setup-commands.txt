@@ -1,0 +1,37 @@
+# Railway CLI Commands to Set Up Multi-Service Architecture
+
+# 1. Link to your existing project
+railway link
+
+# 2. Check current services
+railway service list
+
+# 3. Create/Update Main App Service
+railway service create csv-merger-app
+railway service connect csv-merger-app
+railway variables set DOCKERFILE_PATH=Dockerfile.railway
+railway variables set FLASK_ENV=production
+railway variables set LOG_LEVEL=INFO
+railway variables set SECRET_KEY=your-secure-secret-key-here
+railway variables set WEBHOOK_TIMEOUT=30
+railway variables set MAX_FILE_SIZE_MB=20
+
+# 4. Create Worker Service
+railway service create csv-merger-worker
+railway service connect csv-merger-worker
+railway variables set DOCKERFILE_PATH=Dockerfile.worker
+railway variables set FLASK_ENV=production
+railway variables set LOG_LEVEL=INFO
+
+# 5. Add Redis Service
+railway add redis
+railway service connect redis
+
+# 6. Deploy all services
+railway deploy --service csv-merger-app
+railway deploy --service csv-merger-worker
+
+# 7. Check status
+railway status
+railway logs --service csv-merger-app
+railway logs --service csv-merger-worker
