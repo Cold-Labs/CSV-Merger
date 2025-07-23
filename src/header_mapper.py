@@ -173,6 +173,10 @@ class N8NHeaderMapper:
                 cleaned_record[column] = value
         
         logger.info(f"Filtered out {removed_count} useless columns (including {removed_by_manual_filter} by manual filters), kept {len(cleaned_record)} useful columns")
+        if removed_count > 0:
+            logger.info(f"Kept columns: {list(cleaned_record.keys())}")
+        if len(cleaned_record) == 0:
+            logger.warning("WARNING: All columns were filtered out! This might be too aggressive.")
         return cleaned_record
 
     async def extract_headers_and_samples(self, file_paths: List[str]) -> List[Dict]:
@@ -191,9 +195,19 @@ class N8NHeaderMapper:
             try:
                 logger.info(f"Extracting headers from: {file_path}")
                 
+                # Check if file exists and is readable
+                if not os.path.exists(file_path):
+                    logger.error(f"File does not exist: {file_path}")
+                    continue
+                
+                file_size = os.path.getsize(file_path)
+                logger.info(f"File size: {file_size} bytes")
+                
                 # Read CSV with more rows to better detect empty columns
                 df = pd.read_csv(file_path, nrows=100, low_memory=False)
                 original_columns = len(df.columns)
+                logger.info(f"Original CSV shape: {df.shape} (rows x columns)")
+                logger.info(f"Original headers: {list(df.columns)[:10]}...")  # First 10 headers
                 
                 # Remove completely empty columns
                 df_cleaned = df.dropna(axis=1, how='all')
@@ -212,9 +226,10 @@ class N8NHeaderMapper:
                     # Apply aggressive filtering to remove junk columns
                     cleaned_sample_record = self._clean_sample_record(sample_record)
                     
+                    # TEMPORARY: Don't skip files with no cleaned columns - use original for debugging
                     if not cleaned_sample_record:
-                        logger.warning(f"No useful columns found in {file_path} after filtering")
-                        continue
+                        logger.warning(f"No useful columns found in {file_path} after filtering - using original record for debugging")
+                        cleaned_sample_record = sample_record  # Use original record
                         
                 else:
                     logger.warning(f"No data rows found in {file_path}")
