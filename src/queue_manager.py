@@ -30,8 +30,8 @@ class JobManager:
         self.config = config
         self.socketio = socketio  # Add SocketIO for real-time updates
         
-        # Initialize RQ queue
-        self.queue = Queue('csv_processing', connection=redis_connection)
+        # Initialize RQ queue with proper serialization
+        self.queue = Queue('csv_processing', connection=redis_connection, serializer='json')
         
         # Configuration
         self.session_prefix = "session:"

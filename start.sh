@@ -1,9 +1,12 @@
 #!/bin/bash
+set -e  # Exit on any error
 
 echo "=== CSV Merger Startup Script ==="
+echo "PWD: $(pwd)"
+echo "USER: $(whoami)"
 echo "Environment: $FLASK_ENV"
-echo "Port: $PORT"
-echo "Redis URL: $REDIS_URL"
+echo "Port: $PORT"  
+echo "Redis URL: ${REDIS_URL:0:20}..." # Show only first 20 chars for security
 echo "Secret Key set: $([ -n "$SECRET_KEY" ] && echo "Yes" || echo "No")"
 echo "Temp Upload Dir: $TEMP_UPLOAD_DIR"
 echo "Export Dir: $EXPORT_DIR"
@@ -76,6 +79,7 @@ fi
 echo "✅ All checks passed, starting Gunicorn..."
 
 # Start Gunicorn with eventlet worker
+echo "Starting Gunicorn on 0.0.0.0:${PORT:-5001}..."
 exec gunicorn \
     --worker-class eventlet \
     --workers 1 \
@@ -85,4 +89,5 @@ exec gunicorn \
     --access-logfile - \
     --error-logfile - \
     --log-level info \
+    --preload \
     app:application 
