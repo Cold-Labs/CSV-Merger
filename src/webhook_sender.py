@@ -110,52 +110,74 @@ class WebhookSender:
     
     def _format_record(self, record: Dict[str, Any], table_type: str = 'people') -> Dict[str, Any]:
         """
-        Format record according to standardized schema
+        Format record according to standardized schema with flat structure
         
         Args:
             record: Raw record data
             table_type: 'people' or 'company'
             
         Returns:
-            Formatted record data
+            Formatted record data (flat structure for better webhook compatibility)
         """
+        def clean_value(value: Any) -> str:
+            """Clean and normalize a value"""
+            if value is None:
+                return ""
+            str_value = str(value).strip()
+            # Remove common empty indicators
+            if str_value.lower() in ['', 'nan', 'null', 'none', 'n/a', '#n/a']:
+                return ""
+            return str_value
+        
         if table_type == 'people':
-            return {
-                "person": {
-                    "first_name": record.get("First Name", ""),
-                    "last_name": record.get("Last Name", ""),
-                    "full_name": record.get("Full Name", ""),
-                    "job_title": record.get("Job Title", ""),
-                    "linkedin_profile": record.get("LinkedIn Profile", ""),
-                    "person_location": record.get("Person Location", ""),
-                    "work_email": record.get("Work Email", ""),
-                    "personal_email": record.get("Personal Email", ""),
-                    "phone_number": record.get("Phone Number", "")
-                },
-                "company": {
-                    "company_name": record.get("Company Name", ""),
-                    "company_description": record.get("Company Description", ""),
-                    "company_website": record.get("Company Website", ""),
-                    "company_linkedin_url": record.get("Company LinkedIn URL", ""),
-                    "company_employee_count": record.get("Company Employee Count", ""),
-                    "company_location": record.get("Company Location", ""),
-                    "company_industry": record.get("Company Industry", "")
-                },
-                "source": record.get("Source", "")
+            formatted_record = {
+                # Person fields
+                "first_name": clean_value(record.get("First Name", "")),
+                "last_name": clean_value(record.get("Last Name", "")),
+                "full_name": clean_value(record.get("Full Name", "")),
+                "job_title": clean_value(record.get("Job Title", "")),
+                "linkedin_profile": clean_value(record.get("LinkedIn Profile", "")),
+                "person_location": clean_value(record.get("Person Location", "")),
+                "work_email": clean_value(record.get("Work Email", "")),
+                "personal_email": clean_value(record.get("Personal Email", "")),
+                "phone_number": clean_value(record.get("Phone Number", "")),
+                
+                # Company fields (flat structure)
+                "company_name": clean_value(record.get("Company Name", "")),
+                "company_domain": clean_value(record.get("Company Domain", "")),
+                "company_description": clean_value(record.get("Company Description", "")),
+                "company_website": clean_value(record.get("Company Website", "")),
+                "company_linkedin_url": clean_value(record.get("Company LinkedIn URL", "")),
+                "company_linkedin": clean_value(record.get("Company LinkedIn", "")),
+                "company_employee_count": clean_value(record.get("Company Employee Count", "")),
+                "company_location": clean_value(record.get("Company Location", "")),
+                "company_industry": clean_value(record.get("Company Industry", "")),
+                "year_founded": clean_value(record.get("Year Founded", "")),
+                
+                # Metadata
+                "source": clean_value(record.get("Source", "")),
+                "table_type": "people"
             }
         else:  # company type
-            return {
-                "company_name": record.get("Company Name", ""),
-                "company_domain": record.get("Company Domain", ""),
-                "company_description": record.get("Company Description", ""),
-                "company_industry": record.get("Company Industry", ""),
-                "company_employee_count": record.get("Company Employee Count", ""),
-                "company_linkedin": record.get("Company LinkedIn", ""),
-                "company_linkedin_handle": record.get("Company LinkedIn Handle", ""),
-                "year_founded": record.get("Year Founded", ""),
-                "company_location": record.get("Company Location", ""),
-                "source": record.get("Source", "")
+            formatted_record = {
+                "company_name": clean_value(record.get("Company Name", "")),
+                "company_domain": clean_value(record.get("Company Domain", "")),
+                "company_description": clean_value(record.get("Company Description", "")),
+                "company_industry": clean_value(record.get("Company Industry", "")),
+                "company_employee_count": clean_value(record.get("Company Employee Count", "")),
+                "company_linkedin": clean_value(record.get("Company LinkedIn", "")),
+                "company_linkedin_handle": clean_value(record.get("Company LinkedIn Handle", "")),
+                "year_founded": clean_value(record.get("Year Founded", "")),
+                "company_location": clean_value(record.get("Company Location", "")),
+                "source": clean_value(record.get("Source", "")),
+                "table_type": "company"
             }
+        
+        # Filter out completely empty values to reduce payload size and improve data quality
+        filtered_record = {k: v for k, v in formatted_record.items() if v != ""}
+        
+        logger.debug(f"Formatted record: {len(filtered_record)} non-empty fields out of {len(formatted_record)} total fields")
+        return filtered_record
 
     def __init__(self, config: WebhookConfig, progress_callback: Optional[Callable] = None, table_type: str = 'people'):
         """
