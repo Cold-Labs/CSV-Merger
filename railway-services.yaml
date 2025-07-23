@@ -1,0 +1,59 @@
+# Railway Multi-Service Configuration
+# Use this as a reference when setting up services in Railway dashboard
+
+services:
+  # Main Application Service
+  main-app:
+    name: "CSV-Merger-App"
+    source: "GitHub"
+    repository: "Cold-Labs/CSV-Merger"
+    dockerfile: "Dockerfile.railway"
+    environment:
+      FLASK_ENV: "production"
+      SECRET_KEY: "your-production-secret-key-here"
+      LOG_LEVEL: "INFO"
+      WEBHOOK_TIMEOUT: "30"
+      MAX_FILE_SIZE_MB: "20"
+      MAX_FILES_PER_SESSION: "10"
+      # REDIS_URL will be auto-injected by Railway
+      # PORT will be auto-injected by Railway
+    healthcheck: "/api/health"
+    public: true  # This service needs a public domain
+    
+  # Redis Service
+  redis:
+    name: "CSV-Merger-Redis"
+    type: "redis"
+    version: "7"
+    environment: {}
+    public: false  # Internal service only
+    
+  # Worker Service  
+  worker:
+    name: "CSV-Merger-Worker"
+    source: "GitHub"
+    repository: "Cold-Labs/CSV-Merger"
+    dockerfile: "Dockerfile.worker"
+    environment:
+      FLASK_ENV: "production"
+      LOG_LEVEL: "INFO"
+      # REDIS_URL will be auto-injected by Railway
+    public: false  # Background service, no public access needed
+
+# Service Dependencies
+dependencies:
+  main-app:
+    - redis
+  worker:
+    - redis
+
+# Private Networking
+# All services will communicate via Railway's private network
+# Redis URL will be automatically available to main-app and worker
+# Format: redis://redis:6379 (internal hostname)
+
+# Environment Variable Sharing
+shared_variables:
+  REDIS_URL: "Injected automatically by Railway when Redis service is connected"
+  FLASK_ENV: "production"
+  LOG_LEVEL: "INFO" 

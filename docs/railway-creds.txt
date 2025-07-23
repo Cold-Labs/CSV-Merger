@@ -1,0 +1,8 @@
+Project Token
+0ddcd1d8-be04-4aec-a6d9-22e50688bd5d
+
+Project ID
+cd8f755b-df33-4c44-a591-94c6b5399333
+
+Workspace Token:
+695c5925-38e6-4182-bfbc-a7f84937304c
