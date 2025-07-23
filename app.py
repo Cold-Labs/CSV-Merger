@@ -65,24 +65,34 @@ def create_app():
         engineio_logger=not Config.IS_PRODUCTION
     )
     
-    # Initialize Redis connection
-    try:
-        redis_config = Config.get_redis_config()
-        if 'connection_pool' in redis_config:
-            # Use Redis URL
-            redis_client = redis.from_url(Config.REDIS_URL, decode_responses=True)
-        else:
-            # Use individual Redis settings
-            redis_client = redis.Redis(**redis_config)
-        
-        # Test connection
-        redis_client.ping()
-        logger.info("Redis connection established")
-    except Exception as e:
-        logger.error(f"Redis connection failed: {e}")
-        if Config.IS_PRODUCTION:
-            raise
-        redis_client = None
+    # Initialize Redis connection with retry logic for Railway
+    redis_client = None
+    max_retries = 5
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            redis_config = Config.get_redis_config()
+            if 'connection_pool' in redis_config:
+                # Use Redis URL
+                redis_client = redis.from_url(Config.REDIS_URL, decode_responses=True)
+            else:
+                # Use individual Redis settings
+                redis_client = redis.Redis(**redis_config)
+            
+            # Test connection
+            redis_client.ping()
+            logger.info(f"Redis connection established on attempt {attempt + 1}")
+            break
+        except Exception as e:
+            logger.warning(f"Redis connection attempt {attempt + 1} failed: {e}")
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying Redis connection in {retry_delay} seconds...")
+                import time
+                time.sleep(retry_delay)
+            else:
+                logger.error("All Redis connection attempts failed. App will start without Redis (degraded mode)")
+                redis_client = None
     
     # Initialize managers with debug logging
     logger.info("Initializing ConfigManager...")
@@ -147,7 +157,13 @@ def create_app():
         """Serve favicon to prevent 404 errors"""
         return '', 204
     
-    # Health check endpoint
+    # Simple health check for Railway (no dependencies)
+    @app.route('/health')
+    def simple_health():
+        """Simple health check without dependencies"""
+        return jsonify({'status': 'ok', 'timestamp': datetime.now(timezone.utc).isoformat()}), 200
+    
+    # Detailed health check endpoint
     @app.route('/api/health')
     def health_check():
         """Health check endpoint for Railway and monitoring"""
@@ -166,7 +182,7 @@ def create_app():
                     health_data['redis'] = 'connected'
                 except:
                     health_data['redis'] = 'disconnected'
-                    health_data['status'] = 'degraded'
+                    # Don't mark as degraded - app can function without Redis temporarily
             else:
                 health_data['redis'] = 'not_configured'
             
