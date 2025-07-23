@@ -1,0 +1,365 @@
+<!-- Job Configuration Component -->
+<div x-show="!currentJob && !showJobHistory" class="fade-in">
+    <!-- Processing Configuration -->
+    <div class="bg-white shadow rounded-lg mb-6">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h3 class="text-lg font-medium text-gray-900">Processing Configuration</h3>
+            <p class="text-sm text-gray-500">Configure how your CSV files will be processed</p>
+        </div>
+        
+        <div class="p-6 space-y-6">
+            <!-- Table Type Selection -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-3">Data Type</label>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="relative flex cursor-pointer rounded-lg border bg-white p-4 shadow-sm focus:outline-none">
+                        <input type="radio" 
+                               x-model="tableType" 
+                               value="people" 
+                               class="sr-only">
+                        <span class="flex flex-1">
+                            <span class="flex flex-col">
+                                <span :class="tableType === 'people' ? 'text-blue-900' : 'text-gray-900'" 
+                                      class="block text-sm font-medium">People Data</span>
+                                <span :class="tableType === 'people' ? 'text-blue-700' : 'text-gray-500'" 
+                                      class="mt-1 flex items-center text-sm">
+                                    Contacts, leads, employees
+                                </span>
+                            </span>
+                        </span>
+                        <svg x-show="tableType === 'people'" 
+                             class="h-5 w-5 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                        </svg>
+                        <span :class="tableType === 'people' ? 'border-blue-500' : 'border-transparent'" 
+                              class="pointer-events-none absolute -inset-px rounded-lg border-2"></span>
+                    </label>
+
+                    <label class="relative flex cursor-pointer rounded-lg border bg-white p-4 shadow-sm focus:outline-none">
+                        <input type="radio" 
+                               x-model="tableType" 
+                               value="company" 
+                               class="sr-only">
+                        <span class="flex flex-1">
+                            <span class="flex flex-col">
+                                <span :class="tableType === 'company' ? 'text-blue-900' : 'text-gray-900'" 
+                                      class="block text-sm font-medium">Company Data</span>
+                                <span :class="tableType === 'company' ? 'text-blue-700' : 'text-gray-500'" 
+                                      class="mt-1 flex items-center text-sm">
+                                    Organizations, businesses
+                                </span>
+                            </span>
+                        </span>
+                        <svg x-show="tableType === 'company'" 
+                             class="h-5 w-5 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                        </svg>
+                        <span :class="tableType === 'company' ? 'border-blue-500' : 'border-transparent'" 
+                              class="pointer-events-none absolute -inset-px rounded-lg border-2"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Processing Mode Selection -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-3">Output Method</label>
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="relative flex cursor-pointer rounded-lg border bg-white p-4 shadow-sm focus:outline-none">
+                        <input type="radio" 
+                               x-model="processingMode" 
+                               value="download" 
+                               class="sr-only">
+                        <span class="flex flex-1">
+                            <span class="flex flex-col">
+                                <span :class="processingMode === 'download' ? 'text-blue-900' : 'text-gray-900'" 
+                                      class="block text-sm font-medium">CSV Download</span>
+                                <span :class="processingMode === 'download' ? 'text-blue-700' : 'text-gray-500'" 
+                                      class="mt-1 flex items-center text-sm">
+                                    Download processed file
+                                </span>
+                            </span>
+                        </span>
+                        <svg x-show="processingMode === 'download'" 
+                             class="h-5 w-5 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                        </svg>
+                        <span :class="processingMode === 'download' ? 'border-blue-500' : 'border-transparent'" 
+                              class="pointer-events-none absolute -inset-px rounded-lg border-2"></span>
+                    </label>
+
+                    <label class="relative flex cursor-pointer rounded-lg border bg-white p-4 shadow-sm focus:outline-none">
+                        <input type="radio" 
+                               x-model="processingMode" 
+                               value="webhook" 
+                               class="sr-only">
+                        <span class="flex flex-1">
+                            <span class="flex flex-col">
+                                <span :class="processingMode === 'webhook' ? 'text-blue-900' : 'text-gray-900'" 
+                                      class="block text-sm font-medium">Webhook Delivery</span>
+                                <span :class="processingMode === 'webhook' ? 'text-blue-700' : 'text-gray-500'" 
+                                      class="mt-1 flex items-center text-sm">
+                                    Send to API endpoint
+                                </span>
+                            </span>
+                        </span>
+                        <svg x-show="processingMode === 'webhook'" 
+                             class="h-5 w-5 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                        </svg>
+                        <span :class="processingMode === 'webhook' ? 'border-blue-500' : 'border-transparent'" 
+                              class="pointer-events-none absolute -inset-px rounded-lg border-2"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Webhook Configuration -->
+            <div x-show="processingMode === 'webhook'" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Webhook URL</label>
+                    <div class="flex space-x-2">
+                        <input type="url" 
+                               x-model="webhookUrl" 
+                               placeholder="https://your-webhook-endpoint.com" 
+                               class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                        <button @click="testWebhook()" 
+                                :disabled="!webhookUrl"
+                                class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium">
+                            Test
+                        </button>
+                    </div>
+                    <span x-show="webhookStatus"
+                          :class="webhookStatus.success ? 'text-green-600' : 'text-red-600'"
+                          class="text-sm mt-1 block"
+                          x-text="webhookStatus.message"></span>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Rate Limit (records/sec)</label>
+                        <input type="number" 
+                               x-model="webhookRateLimit" 
+                               min="1" 
+                               max="100" 
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Record Limit (0 = no limit)</label>
+                        <input type="number" 
+                               x-model="webhookLimit" 
+                               min="0" 
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- n8n AI System Status -->
+    <div class="bg-white shadow rounded-lg mb-6">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-900">AI Mapping System</h3>
+                    <p class="text-sm text-gray-500">n8n webhook for intelligent column mapping</p>
+                </div>
+                <button @click="testN8nConnection()" 
+                        class="text-sm bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200 transition-colors">
+                    Test Connection
+                </button>
+            </div>
+        </div>
+        
+        <div class="p-6">
+            <div class="flex items-center space-x-3">
+                <div :class="n8nStatus ? (n8nStatus.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800') : 'bg-gray-100 text-gray-800'" 
+                     class="px-3 py-1 rounded-full text-sm font-medium">
+                    <span x-text="n8nStatus ? (n8nStatus.success ? 'Connected' : 'Error') : 'Not Tested'"></span>
+                </div>
+                <span class="text-sm text-gray-600" x-text="n8nStatus?.message || 'Click Test Connection to verify n8n webhook'"></span>
+            </div>
+
+            <div class="mt-4 text-xs text-gray-500 space-y-1">
+                <p>• AI system analyzes your CSV headers and maps them to standard fields</p>
+                <p>• Supports priority-based mappings (primary, secondary, tertiary)</p>
+                <p>• Filters out junk columns automatically to reduce costs</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Start Processing Button -->
+    <div class="bg-white shadow rounded-lg">
+        <div class="p-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-lg font-medium text-gray-900">Ready to Process</h3>
+                    <p class="text-sm text-gray-500">
+                        <span x-text="uploadedFiles.length"></span> files ready • 
+                        <span x-text="tableType"></span> data • 
+                        <span x-text="processingMode"></span> mode
+                    </p>
+                </div>
+                
+                <button @click="startProcessing()" 
+                        :disabled="!canStartProcessing()"
+                        class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors">
+                    <span x-show="!processingStarting">Start Processing</span>
+                    <span x-show="processingStarting" class="flex items-center">
+                        <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Starting...
+                    </span>
+                </button>
+            </div>
+
+            <!-- Prerequisites Check -->
+            <div class="mt-4 space-y-2">
+                <div class="flex items-center text-sm">
+                    <svg :class="uploadedFiles.length > 0 ? 'text-green-500' : 'text-gray-400'" 
+                         class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                    </svg>
+                    <span :class="uploadedFiles.length > 0 ? 'text-gray-700' : 'text-gray-400'">
+                        Files uploaded (<span x-text="uploadedFiles.length"></span>)
+                    </span>
+                </div>
+
+                <div class="flex items-center text-sm">
+                    <svg :class="processingMode === 'download' || (processingMode === 'webhook' && webhookUrl) ? 'text-green-500' : 'text-gray-400'" 
+                         class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                    </svg>
+                    <span :class="processingMode === 'download' || (processingMode === 'webhook' && webhookUrl) ? 'text-gray-700' : 'text-gray-400'">
+                        Output configured
+                    </span>
+                </div>
+
+                <div class="flex items-center text-sm">
+                    <svg :class="isAuthenticated ? 'text-green-500' : 'text-gray-400'" 
+                         class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                    </svg>
+                    <span :class="isAuthenticated ? 'text-gray-700' : 'text-gray-400'">
+                        User authenticated
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Job configuration helper functions
+function canStartProcessing() {
+    return this.uploadedFiles.length > 0 && 
+           this.isAuthenticated && 
+           (this.processingMode === 'download' || 
+            (this.processingMode === 'webhook' && this.webhookUrl)) &&
+           !this.processingStarting;
+}
+
+function testWebhook() {
+    if (!this.webhookUrl) return;
+    
+    this.webhookStatus = null;
+    
+    fetch('/api/webhook/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webhook_url: this.webhookUrl })
+    })
+    .then(response => response.json())
+    .then(data => {
+        this.webhookStatus = {
+            success: data.success,
+            message: data.success ? 
+                `✓ Connected (${data.response_time_ms}ms)` : 
+                `✗ ${data.error}`
+        };
+    })
+    .catch(error => {
+        this.webhookStatus = {
+            success: false,
+            message: `✗ Test failed: ${error.message}`
+        };
+    });
+}
+
+function testN8nConnection() {
+    this.n8nStatus = null;
+    
+    fetch('/api/webhook/test-n8n', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+    .then(response => response.json())
+    .then(data => {
+        this.n8nStatus = {
+            success: data.success,
+            message: data.success ? 
+                '✓ n8n AI mapping system is accessible' : 
+                `✗ ${data.error}`
+        };
+    })
+    .catch(error => {
+        this.n8nStatus = {
+            success: false,
+            message: `✗ Connection failed: ${error.message}`
+        };
+    });
+}
+
+function startProcessing() {
+    if (!this.canStartProcessing()) return;
+    
+    this.processingStarting = true;
+    
+    const jobData = {
+        user_id: this.currentUserId,
+        session_id: this.sessionId,
+        table_type: this.tableType,
+        processing_mode: this.processingMode,
+        webhook_url: this.processingMode === 'webhook' ? this.webhookUrl : null,
+        webhook_rate_limit: this.webhookRateLimit,
+        webhook_limit: this.webhookLimit
+    };
+    
+    fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(jobData)
+    })
+    .then(response => response.json())
+    .then(data => {
+        this.processingStarting = false;
+        
+        if (data.success) {
+            this.currentJob = {
+                job_id: data.job_id,
+                status: data.status?.status || 'processing',
+                processing_mode: this.processingMode,
+                progress: {
+                    percentage: 0,
+                    message: 'Starting processing...',
+                    stage: 'setup'
+                }
+            };
+            
+            // Join job for real-time updates
+            if (this.socket) {
+                this.socket.emit('join_job', { job_id: data.job_id });
+            }
+            
+            this.addNotification('Processing started successfully!', 'success');
+        } else {
+            this.addNotification(data.error || 'Failed to start processing', 'error');
+        }
+    })
+    .catch(error => {
+        this.processingStarting = false;
+        this.addNotification('Failed to start processing: ' + error.message, 'error');
+    });
+}
+</script> 

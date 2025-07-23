@@ -1,11 +1,16 @@
-import json
 import os
+import json
+import logging
 import shutil
 from datetime import datetime
 from typing import Dict, Any, Optional
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import logging
+
+from src.logging_config import setup_module_logger
+from config.settings import Config  # Import the main Config class
+
+logger = setup_module_logger(__name__)
 
 class ConfigFileHandler(FileSystemEventHandler):
     """File system event handler for configuration file changes"""
@@ -28,6 +33,10 @@ class ConfigManager:
         self._ensure_backup_dir()
         self.load_field_mappings()
         self._setup_file_watcher()
+    
+    def get_n8n_webhook_url(self) -> str:
+        """Get the n8n webhook URL from the main app config"""
+        return Config.N8N_WEBHOOK_URL
     
     def _ensure_backup_dir(self):
         """Create backup directory if it doesn't exist"""

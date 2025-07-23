@@ -1,0 +1,258 @@
+<!-- Column Mapping Visualization Component -->
+<div x-show="n8nMappingData && Object.keys(n8nMappingData).length > 0" class="bg-white shadow-lg rounded-lg border border-gray-200 fade-in">
+    <div class="px-6 py-4 border-b border-gray-200">
+        <div class="flex items-center justify-between">
+            <div>
+                <h3 class="text-lg font-semibold text-gray-900">AI Column Mappings</h3>
+                <p class="text-sm text-gray-500">n8n response showing how columns are mapped to standard fields</p>
+            </div>
+            <div class="flex items-center space-x-2">
+                <span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                    <span x-text="(n8nMappingData?.mapped_files || []).length"></span> files mapped
+                </span>
+                <button @click="showMappingDetails = !showMappingDetails" 
+                        class="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded hover:bg-gray-200 transition-colors">
+                    <span x-text="showMappingDetails ? 'Hide Details' : 'Show Details'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mapping Summary -->
+    <div class="p-6 border-b border-gray-100">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div class="text-center p-3 bg-blue-50 rounded-lg">
+                <div class="text-2xl font-bold text-blue-600" x-text="getTotalMappedColumns()"></div>
+                <div class="text-xs text-blue-700">Total Mapped</div>
+            </div>
+            <div class="text-center p-3 bg-green-50 rounded-lg">
+                <div class="text-2xl font-bold text-green-600" x-text="getPrimaryMappings()"></div>
+                <div class="text-xs text-green-700">Primary</div>
+            </div>
+            <div class="text-center p-3 bg-yellow-50 rounded-lg">
+                <div class="text-2xl font-bold text-yellow-600" x-text="getSecondaryMappings()"></div>
+                <div class="text-xs text-yellow-700">Secondary</div>
+            </div>
+            <div class="text-center p-3 bg-purple-50 rounded-lg">
+                <div class="text-2xl font-bold text-purple-600" x-text="getTertiaryMappings()"></div>
+                <div class="text-xs text-purple-700">Tertiary</div>
+            </div>
+        </div>
+
+        <!-- Standard Headers Coverage -->
+        <div class="mb-4">
+            <h4 class="text-sm font-medium text-gray-900 mb-2">Standard Field Coverage</h4>
+            <div class="flex flex-wrap gap-2">
+                <template x-for="field in getStandardFieldsCoverage()" :key="field.name">
+                    <span :class="field.mapped ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'" 
+                          class="text-xs px-2 py-1 rounded-full">
+                        <span x-text="field.name"></span>
+                        <span x-show="field.mapped" class="ml-1">✓</span>
+                        <span x-show="!field.mapped" class="ml-1">✗</span>
+                    </span>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- File-by-File Mappings -->
+    <div x-show="showMappingDetails" class="p-6">
+        <h4 class="text-sm font-medium text-gray-900 mb-4">File-by-File Mapping Details</h4>
+        
+        <div class="space-y-6">
+            <template x-for="(file, index) in (n8nMappingData?.mapped_files || [])" :key="file.filename">
+                <div class="border border-gray-200 rounded-lg overflow-hidden">
+                    <!-- File Header -->
+                    <div class="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-3">
+                                <span class="text-sm font-medium text-gray-900" x-text="file.filename"></span>
+                                <span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                    <span x-text="Object.keys(file.mapped_headers || {}).length"></span> mappings
+                                </span>
+                            </div>
+                            <button @click="toggleFileDetails(index)" 
+                                    class="text-xs text-gray-500 hover:text-gray-700">
+                                <span x-text="file.showDetails ? 'Collapse' : 'Expand'"></span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- File Mappings -->
+                    <div x-show="file.showDetails !== false" class="p-4">
+                        <div class="space-y-3">
+                            <template x-for="(mapping, originalHeader) in (file.mapped_headers || {})" :key="originalHeader">
+                                <div class="mapping-row">
+                                    <div class="flex items-start space-x-4">
+                                        <!-- Original Column -->
+                                        <div class="flex-1 min-w-0">
+                                            <div class="text-sm font-medium text-gray-900 truncate" x-text="originalHeader"></div>
+                                            <div class="text-xs text-gray-500">Original Column</div>
+                                        </div>
+
+                                        <!-- Mapping Arrow -->
+                                        <div class="flex-shrink-0 pt-2">
+                                            <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
+                                            </svg>
+                                        </div>
+
+                                        <!-- Mapped Fields -->
+                                        <div class="flex-2 min-w-0">
+                                            <!-- Primary Mapping -->
+                                            <div x-show="mapping.primary" class="mb-2">
+                                                <div class="flex items-center space-x-2">
+                                                    <span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded font-medium">Primary</span>
+                                                    <span class="text-sm font-medium text-gray-900" x-text="mapping.primary"></span>
+                                                </div>
+                                            </div>
+
+                                            <!-- Secondary Mapping -->
+                                            <div x-show="mapping.secondary" class="mb-2">
+                                                <div class="flex items-center space-x-2">
+                                                    <span class="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-medium">Secondary</span>
+                                                    <span class="text-sm text-gray-700" x-text="mapping.secondary"></span>
+                                                </div>
+                                            </div>
+
+                                            <!-- Tertiary Mapping -->
+                                            <div x-show="mapping.tertiary" class="mb-2">
+                                                <div class="flex items-center space-x-2">
+                                                    <span class="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded font-medium">Tertiary</span>
+                                                    <span class="text-sm text-gray-600" x-text="mapping.tertiary"></span>
+                                                </div>
+                                            </div>
+
+                                            <!-- Single Mapping (fallback) -->
+                                            <div x-show="!mapping.primary && !mapping.secondary && !mapping.tertiary && typeof mapping === 'string'" class="mb-2">
+                                                <div class="flex items-center space-x-2">
+                                                    <span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded font-medium">Mapped</span>
+                                                    <span class="text-sm text-gray-700" x-text="mapping"></span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+
+                        <!-- No Mappings Message -->
+                        <div x-show="!file.mapped_headers || Object.keys(file.mapped_headers).length === 0" 
+                             class="text-center py-4 text-gray-500 text-sm">
+                            No column mappings found for this file
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- No Files Message -->
+        <div x-show="!n8nMappingData?.mapped_files || n8nMappingData.mapped_files.length === 0" 
+             class="text-center py-8 text-gray-500">
+            <svg class="w-12 h-12 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+            <p class="text-sm">No mapping data available</p>
+        </div>
+    </div>
+
+    <!-- Raw n8n Response (Debug) -->
+    <div x-show="showMappingDetails && showDebugInfo" class="p-6 border-t border-gray-200 bg-gray-50">
+        <div class="flex items-center justify-between mb-3">
+            <h4 class="text-sm font-medium text-gray-900">Raw n8n Response (Debug)</h4>
+            <button @click="showDebugInfo = !showDebugInfo" 
+                    class="text-xs text-gray-500 hover:text-gray-700">
+                Hide Debug
+            </button>
+        </div>
+        <pre class="text-xs bg-gray-800 text-green-400 p-3 rounded overflow-auto max-h-40" 
+             x-text="JSON.stringify(n8nMappingData, null, 2)"></pre>
+    </div>
+</div>
+
+<style>
+.mapping-row {
+    @apply p-3 bg-gray-50 rounded-lg border border-gray-200;
+}
+
+.mapping-row:hover {
+    @apply bg-gray-100 border-gray-300;
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+</style>
+
+<script>
+// Alpine.js helper functions for column mapping component
+function getTotalMappedColumns() {
+    if (!this.n8nMappingData?.mapped_files) return 0;
+    return this.n8nMappingData.mapped_files.reduce((total, file) => {
+        return total + Object.keys(file.mapped_headers || {}).length;
+    }, 0);
+}
+
+function getPrimaryMappings() {
+    if (!this.n8nMappingData?.mapped_files) return 0;
+    return this.n8nMappingData.mapped_files.reduce((total, file) => {
+        return total + Object.values(file.mapped_headers || {}).filter(mapping => 
+            mapping?.primary || (typeof mapping === 'string')
+        ).length;
+    }, 0);
+}
+
+function getSecondaryMappings() {
+    if (!this.n8nMappingData?.mapped_files) return 0;
+    return this.n8nMappingData.mapped_files.reduce((total, file) => {
+        return total + Object.values(file.mapped_headers || {}).filter(mapping => 
+            mapping?.secondary
+        ).length;
+    }, 0);
+}
+
+function getTertiaryMappings() {
+    if (!this.n8nMappingData?.mapped_files) return 0;
+    return this.n8nMappingData.mapped_files.reduce((total, file) => {
+        return total + Object.values(file.mapped_headers || {}).filter(mapping => 
+            mapping?.tertiary
+        ).length;
+    }, 0);
+}
+
+function getStandardFieldsCoverage() {
+    const standardFields = [
+        'First Name', 'Last Name', 'Work Email', 'Personal Email', 'Job Title',
+        'Company Name', 'Company Domain', 'LinkedIn Profile', 'Phone Number'
+    ];
+    
+    const mappedFields = new Set();
+    if (this.n8nMappingData?.mapped_files) {
+        this.n8nMappingData.mapped_files.forEach(file => {
+            Object.values(file.mapped_headers || {}).forEach(mapping => {
+                if (mapping?.primary) mappedFields.add(mapping.primary);
+                if (mapping?.secondary) mappedFields.add(mapping.secondary);
+                if (mapping?.tertiary) mappedFields.add(mapping.tertiary);
+                if (typeof mapping === 'string') mappedFields.add(mapping);
+            });
+        });
+    }
+    
+    return standardFields.map(field => ({
+        name: field,
+        mapped: mappedFields.has(field)
+    }));
+}
+
+function toggleFileDetails(index) {
+    if (this.n8nMappingData?.mapped_files?.[index]) {
+        this.n8nMappingData.mapped_files[index].showDetails = 
+            !this.n8nMappingData.mapped_files[index].showDetails;
+    }
+}
+</script> 

@@ -11,7 +11,8 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from config.settings import Config
 
-logger = logging.getLogger(__name__)
+from src.logging_config import setup_module_logger
+logger = setup_module_logger(__name__)
 
 @dataclass
 class SessionInfo:
@@ -81,18 +82,19 @@ class SessionManager:
         
         logger.info("Session Manager initialized")
     
-    def create_session(self, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> SessionInfo:
+    def create_session(self, ip_address: Optional[str] = None, user_agent: Optional[str] = None, session_id_override: Optional[str] = None) -> SessionInfo:
         """
         Create a new session
         
         Args:
             ip_address: Client IP address
             user_agent: Client user agent
+            session_id_override: Optional specific session ID to use
             
         Returns:
             SessionInfo object
         """
-        session_id = str(uuid.uuid4())
+        session_id = session_id_override or str(uuid.uuid4())
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=self.session_ttl)
         
@@ -488,7 +490,7 @@ class SessionManager:
         session_key = f"{self.session_key_prefix}{session_info.session_id}"
         self.redis.setex(session_key, self.session_ttl, json.dumps(session_info.to_dict())) 
     
-    def store_file(self, session_id: str, file_obj, filename: str) -> Dict[str, Any]:
+    def store_file(self, session_id: str, file_obj, filename: str, force_clear: bool = False) -> Dict[str, Any]:
         """
         Store an uploaded file for a session
         
@@ -496,6 +498,7 @@ class SessionManager:
             session_id: Session ID
             file_obj: File object from request
             filename: Original filename
+            force_clear: If True, clear existing files before checking limits
             
         Returns:
             Dictionary with file information
@@ -503,6 +506,11 @@ class SessionManager:
         Raises:
             ValueError: If storage or file limits exceeded
         """
+        # If force_clear is enabled, clear all existing files first
+        if force_clear:
+            logger.info(f"Force clearing files for session {session_id}")
+            self._force_clear_session_files(session_id)
+        
         # Clean filename for security
         safe_filename = self._clean_filename(filename)
         
@@ -514,11 +522,17 @@ class SessionManager:
         # Check limits before saving
         storage_ok, storage_info = self.check_storage_limit(session_id, file_size)
         if not storage_ok:
-            raise ValueError(f"Storage limit exceeded: {storage_info['message']}")
+            current_mb = storage_info.get('current_usage_mb', 0)
+            limit_mb = storage_info.get('limit_mb', 0)
+            projected_mb = storage_info.get('projected_usage_mb', 0)
+            raise ValueError(f"Storage limit exceeded: {projected_mb}MB would exceed {limit_mb}MB limit (currently using {current_mb}MB)")
         
         files_ok, files_info = self.check_file_limit(session_id, 1)
         if not files_ok:
-            raise ValueError(f"File limit exceeded: {files_info['message']}")
+            current_files = files_info.get('current_files', 0)
+            limit_files = files_info.get('limit_files', 0)
+            projected_files = files_info.get('projected_files', 0)
+            raise ValueError(f"File limit exceeded: {projected_files} files would exceed {limit_files} file limit (currently have {current_files} files)")
         
         # Create session directory if it doesn't exist
         session_dir = self._get_session_dir(session_id)
@@ -559,6 +573,36 @@ class SessionManager:
         
         logger.info(f"File stored for session {session_id}: {safe_filename} ({actual_size} bytes)")
         return file_info
+    
+    def _force_clear_session_files(self, session_id: str):
+        """Force clear all files for a session, bypassing normal checks"""
+        try:
+            logger.info(f"Force clearing session files for {session_id}")
+            
+            # Clear Redis file data
+            files_key = f"{self.session_files_prefix}{session_id}"
+            deleted_count = self.redis.delete(files_key)
+            logger.info(f"Deleted Redis files key {files_key}: {deleted_count}")
+            
+            # Clear session directory
+            session_dir = self._get_session_dir(session_id)
+            if os.path.exists(session_dir):
+                import shutil
+                shutil.rmtree(session_dir, ignore_errors=True)
+                logger.info(f"Deleted session directory: {session_dir}")
+            
+            # Reset session file count
+            session_info = self.get_session(session_id, update_access=False)
+            if session_info:
+                session_info.files_uploaded = 0
+                session_info.storage_used_bytes = 0
+                session_info.storage_used_mb = 0.0
+                self._save_session(session_info)
+                logger.info(f"Reset session stats for {session_id}")
+                
+        except Exception as e:
+            logger.error(f"Error force clearing session files: {e}")
+            # Don't raise - this is a cleanup operation
     
     def _clean_filename(self, filename: str) -> str:
         """

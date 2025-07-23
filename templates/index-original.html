@@ -1,0 +1,1340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>CSV Merger - Professional Lead Processing</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eff6ff',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Alpine.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    
+    <!-- Socket.IO -->
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    
+    <!-- Heroicons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/heroicons/2.0.18/heroicons.min.css">
+    
+    <style>
+        [x-cloak] { display: none !important; }
+        
+        .drag-over {
+            border-color: #3b82f6 !important;
+            background-color: #eff6ff !important;
+            transform: scale(1.02);
+        }
+        
+        .progress-bar {
+            transition: width 0.5s ease-in-out;
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.5s ease-in-out;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .pulse-success {
+            animation: pulseSuccess 1s ease-in-out;
+        }
+        
+        @keyframes pulseSuccess {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        .connection-status {
+            transition: all 0.3s ease;
+        }
+
+        .file-upload-area {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .stage-indicator {
+            position: relative;
+            padding-left: 1rem;
+        }
+
+        .stage-indicator::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #d1d5db;
+        }
+
+        .stage-indicator.active::before {
+            background-color: #3b82f6;
+            animation: pulse 2s infinite;
+        }
+
+        .stage-indicator.completed::before {
+            background-color: #10b981;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .job-card {
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .job-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+
+        .notification {
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div x-data="csvMergerApp()" x-cloak class="min-h-screen">
+        <!-- Header -->
+        <header class="bg-white shadow-sm border-b border-gray-200">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between items-center py-6">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0">
+                            <h1 class="text-3xl font-bold text-gray-900">CSV Merger</h1>
+                            <p class="text-sm text-gray-500">Professional Lead Processing for Cold Email Agencies</p>
+                            <div x-show="isAuthenticated" class="mt-1">
+                                <span class="text-xs text-gray-500">User: </span>
+                                <span class="text-xs font-medium text-blue-600" x-text="currentUserId"></span>
+                                <button @click="logout()" class="ml-2 text-xs text-red-600 hover:text-red-800">
+                                    Switch User
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Connection & Health Status -->
+                    <div class="flex items-center space-x-4">
+                        <!-- WebSocket Status -->
+                        <div class="flex items-center connection-status">
+                            <div :class="socketStatus === 'connected' ? 'bg-green-400' : socketStatus === 'connecting' ? 'bg-yellow-400' : 'bg-red-400'" 
+                                 class="h-2 w-2 rounded-full mr-2"></div>
+                            <span class="text-sm text-gray-600" x-text="socketStatusText">Connecting...</span>
+                        <button @click="resetSession()" 
+                                class="ml-2 text-xs bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600">
+                            Reset Session
+                        </button>
+                        </div>
+                        
+                        <!-- System Health -->
+                        <div class="flex items-center">
+                            <div :class="healthStatus.status === 'healthy' ? 'bg-green-400' : 'bg-red-400'" 
+                                 class="h-2 w-2 rounded-full mr-2"></div>
+                            <span class="text-sm text-gray-600" x-text="healthStatus.message">Checking...</span>
+                        </div>
+
+                        <!-- Session Info -->
+                        <div x-show="sessionId" class="text-xs text-gray-500">
+                            Session: <span x-text="sessionId?.slice(-8)"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Notifications -->
+        <div x-show="notifications.length > 0" class="fixed top-4 right-4 z-50 space-y-2">
+            <template x-for="notification in notifications" :key="notification.id">
+                <div x-show="notification.visible" x-transition:enter="transition ease-out duration-300"
+                     x-transition:enter-start="transform translate-x-full opacity-0"
+                     x-transition:enter-end="transform translate-x-0 opacity-100"
+                     x-transition:leave="transition ease-in duration-200"
+                     x-transition:leave-start="transform translate-x-0 opacity-100"
+                     x-transition:leave-end="transform translate-x-full opacity-0"
+                     :class="notification.type === 'success' ? 'bg-green-500' : notification.type === 'error' ? 'bg-red-500' : 'bg-blue-500'"
+                     class="notification text-white px-6 py-3 rounded-lg shadow-lg max-w-sm">
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm font-medium" x-text="notification.message"></span>
+                        <button @click="removeNotification(notification.id)" class="ml-3 text-white hover:text-gray-200">
+                            ×
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- Login Section -->
+        <div x-show="!isAuthenticated" class="max-w-md mx-auto mt-20">
+            <div class="bg-white shadow rounded-lg p-6">
+                <h2 class="text-2xl font-bold text-center mb-4">Enter User ID</h2>
+                <p class="text-gray-600 text-center mb-4">Simple identification to keep your files separate</p>
+                <div class="space-y-4">
+                    <input x-model="userIdInput" 
+                           @keyup.enter="authenticate()"
+                           type="text" 
+                           placeholder="Enter any user ID (e.g., john, agency1, etc.)"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button @click="authenticate()" 
+                            :disabled="!userIdInput.trim()"
+                            class="w-full bg-blue-500 text-white py-2 rounded-md hover:bg-blue-600 disabled:bg-gray-300">
+                        Continue
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content (only shown when authenticated) -->
+        <main x-show="isAuthenticated" class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+
+
+            <!-- Navigation Tabs -->
+            <div x-show="!currentJob" class="border-b border-gray-200 mb-6">
+                <nav class="-mb-px flex space-x-8">
+                    <button @click="showJobHistory = false" 
+                            :class="!showJobHistory ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                            class="whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm">
+                        New Job
+                    </button>
+                    <button @click="showJobHistory = true; loadJobHistory()" 
+                            :class="showJobHistory ? 'border-primary-500 text-primary-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                            class="whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm">
+                        Job History
+                        <span x-show="completedJobs.length > 0" 
+                              class="ml-2 bg-gray-100 text-gray-600 py-0.5 px-2 rounded-full text-xs"
+                              x-text="completedJobs.length"></span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Job History -->
+            <div x-show="showJobHistory && !currentJob" class="fade-in">
+                <div class="bg-white shadow rounded-lg">
+                    <div class="px-6 py-4 border-b border-gray-200">
+                        <h3 class="text-lg font-medium text-gray-900">Job History</h3>
+                    </div>
+                    <div x-show="completedJobs.length === 0" class="p-6 text-center text-gray-500">
+                        No completed jobs found
+                    </div>
+                    <div x-show="completedJobs.length > 0" class="divide-y divide-gray-200">
+                        <template x-for="job in completedJobs" :key="job.job_id">
+                            <div class="p-6 job-card cursor-pointer" @click="selectHistoryJob(job)">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex-1">
+                                        <div class="flex items-center">
+                                            <h4 class="text-sm font-medium text-gray-900" x-text="job.job_id"></h4>
+                                            <span :class="getJobStatusColor(job.status)" 
+                                                  class="ml-2 inline-flex px-2 py-1 text-xs font-semibold rounded-full"
+                                                  x-text="job.status"></span>
+                                        </div>
+                                        <div class="mt-1 text-sm text-gray-500">
+                                            <span x-text="job.table_type"></span> • 
+                                            <span x-text="job.processing_mode"></span> • 
+                                            <span x-text="formatDate(job.created_at)"></span>
+                                        </div>
+                                        <div x-show="job.download_info?.stats" class="mt-2 text-xs text-gray-600">
+                                            <span x-text="job.download_info.stats.total_records || 0"></span> records processed
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center space-x-2">
+                                        <button x-show="job.download_info" 
+                                                @click.stop="downloadJob(job.job_id)"
+                                                class="text-primary-600 hover:text-primary-800 text-sm font-medium">
+                                            Download
+                                        </button>
+                                        <svg class="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                                        </svg>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Configuration Panel -->
+            <div x-show="!currentJob && !showJobHistory" class="bg-white shadow rounded-lg mb-6 fade-in">
+                <div class="px-6 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-medium text-gray-900">Processing Configuration</h3>
+                </div>
+                <div class="p-6">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Table Type Selection -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-3">Table Type</label>
+                            <div class="space-y-3">
+                                <label class="flex items-center p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                                    <input type="radio" x-model="config.tableType" value="company" 
+                                           class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300">
+                                    <div class="ml-3">
+                                        <div class="text-sm font-medium text-gray-700">Company Leads</div>
+                                        <div class="text-xs text-gray-500">Business contacts and company information</div>
+                                    </div>
+                                </label>
+                                <label class="flex items-center p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                                    <input type="radio" x-model="config.tableType" value="people" 
+                                           class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300">
+                                    <div class="ml-3">
+                                        <div class="text-sm font-medium text-gray-700">People Leads</div>
+                                        <div class="text-xs text-gray-500">Individual contacts and personal information</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Processing Mode -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-3">Processing Mode</label>
+                            <div class="space-y-3">
+                                <label class="flex items-center p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                                    <input type="radio" x-model="config.processingMode" value="download" 
+                                           class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300">
+                                    <div class="ml-3">
+                                        <div class="text-sm font-medium text-gray-700">Download CSV</div>
+                                        <div class="text-xs text-gray-500">Process and download the merged file</div>
+                                    </div>
+                                </label>
+                                <label class="flex items-center p-3 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                                    <input type="radio" x-model="config.processingMode" value="webhook" 
+                                           class="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300">
+                                    <div class="ml-3">
+                                        <div class="text-sm font-medium text-gray-700">Send via Webhook</div>
+                                        <div class="text-xs text-gray-500">Send records to your API endpoint</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- n8n Header Mapping Info -->
+                    <div class="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <h4 class="text-sm font-medium text-blue-800 mb-3 flex items-center">
+                            <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+                            </svg>
+                            Smart Header Mapping with n8n AI
+                        </h4>
+                        <p class="text-sm text-blue-700 mb-3">
+                            This system automatically sends your CSV headers to our n8n AI service for intelligent mapping to standard field names. 
+                            This ensures your data is properly structured regardless of the original column names.
+                        </p>
+                        <div class="flex items-center space-x-3">
+                            <button @click="testN8NWebhook()" 
+                                    :disabled="isTestingN8N"
+                                    class="inline-flex items-center px-3 py-2 border border-blue-300 shadow-sm text-sm font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <span x-show="!isTestingN8N">Test n8n Connection</span>
+                                <span x-show="isTestingN8N">Testing...</span>
+                            </button>
+                            <span x-show="n8nStatus" 
+                                  :class="n8nStatus.success ? 'text-green-600' : 'text-red-600'"
+                                  class="text-sm"
+                                  x-text="n8nStatus.message"></span>
+                        </div>
+                    </div>
+                    
+                    <!-- Webhook Configuration -->
+                    <div x-show="config.processingMode === 'webhook'" x-transition class="mt-6 space-y-4">
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <h4 class="text-sm font-medium text-blue-800 mb-3">Webhook Configuration</h4>
+                            <div class="space-y-4">
+                                <div>
+                                    <label for="webhook-url" class="block text-sm font-medium text-gray-700">Webhook URL</label>
+                                    <input type="url" id="webhook-url" x-model="config.webhookUrl" 
+                                           placeholder="https://your-api.com/webhook"
+                                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                                    <p class="mt-1 text-xs text-gray-500">Your endpoint will receive POST requests with lead data</p>
+                                </div>
+                                <div>
+                                    <label for="rate-limit" class="block text-sm font-medium text-gray-700">Rate Limit (requests/second)</label>
+                                    <input type="number" id="rate-limit" x-model="config.rateLimit" min="1" max="100" 
+                                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                                    <p class="mt-1 text-xs text-gray-500">Adjust based on your API's capacity</p>
+                                </div>
+                                <div>
+                                    <label for="webhook-limit" class="block text-sm font-medium text-gray-700">Webhook Limit (max records to send)</label>
+                                    <input type="number" id="webhook-limit" x-model="config.webhookLimit" min="0" 
+                                           placeholder="0 = no limit"
+                                           class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm">
+                                    <p class="mt-1 text-xs text-gray-500">Set to 0 or leave empty for no limit. Useful for testing.</p>
+                                </div>
+                                <div>
+                                    <button @click="testWebhook()" 
+                                            :disabled="!config.webhookUrl || isTestingWebhook"
+                                            class="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                                        <span x-show="!isTestingWebhook">Test Webhook</span>
+                                        <span x-show="isTestingWebhook">Testing...</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- File Upload Area -->
+            <div x-show="!currentJob && !showJobHistory" class="fade-in">
+                <div @drop.prevent="handleDrop($event)" 
+                     @dragover.prevent="dragOver = true" 
+                     @dragleave.prevent="dragOver = false"
+                     :class="dragOver ? 'drag-over' : ''"
+                     class="file-upload-area relative border-2 border-dashed border-gray-300 rounded-lg p-12 text-center hover:border-gray-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-all">
+                    
+                    <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                        <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                    
+                    <div class="mt-4">
+                        <p class="text-sm text-gray-600">
+                            <button @click="$refs.fileInput.click()" 
+                                    class="font-medium text-primary-600 hover:text-primary-500 transition-colors">
+                                Upload CSV files
+                            </button>
+                            or drag and drop
+                        </p>
+                        <p class="text-xs text-gray-500 mt-1">CSV files up to 20MB each • Multiple files supported</p>
+                    </div>
+                    
+                    <input x-ref="fileInput" @change="handleFileInput($event)" 
+                           type="file" multiple accept=".csv" class="hidden">
+                </div>
+            </div>
+
+            <!-- Uploaded Files List -->
+            <div x-show="uploadedFiles.length > 0 && !currentJob" class="mt-6 bg-white shadow rounded-lg fade-in">
+                <div class="px-6 py-4 border-b border-gray-200">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-lg font-medium text-gray-900">
+                            Uploaded Files 
+                            <span class="text-sm font-normal text-gray-500">(<span x-text="uploadedFiles.length"></span>)</span>
+                        </h3>
+                        <div class="flex space-x-3">
+                            <button @click="clearFiles()" 
+                                    class="text-gray-500 hover:text-gray-700 text-sm">
+                                Clear All
+                            </button>
+                            <button @click="startProcessing()" 
+                                    :disabled="!canStartProcessing"
+                                    :class="canStartProcessing ? 'bg-primary-600 hover:bg-primary-700' : 'bg-gray-300 cursor-not-allowed'"
+                                    class="px-6 py-2 text-white text-sm font-medium rounded-md transition-colors">
+                                Start Processing
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="divide-y divide-gray-200">
+                    <template x-for="(file, index) in uploadedFiles" :key="file.name + index">
+                        <div class="px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                            <div class="flex items-center">
+                                <svg class="h-5 w-5 text-green-500 mr-3" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                                <div>
+                                    <p class="text-sm font-medium text-gray-900" x-text="file.name"></p>
+                                    <p class="text-xs text-gray-500" x-text="formatFileSize(file.size)"></p>
+                                </div>
+                            </div>
+                            <button @click="removeFile(index)" 
+                                    class="text-red-600 hover:text-red-800 text-sm transition-colors">
+                                Remove
+                            </button>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Processing Progress -->
+            <div x-show="currentJob" class="bg-white shadow rounded-lg fade-in">
+                <div class="px-6 py-4 border-b border-gray-200">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-lg font-medium text-gray-900">Processing Job</h3>
+                        <div class="flex items-center space-x-3">
+                            <span class="text-sm text-gray-500" x-text="currentJob?.job_id"></span>
+                            <button x-show="currentJob?.status === 'processing'" 
+                                    @click="cancelJob()"
+                                    class="text-red-600 hover:text-red-800 text-sm">
+                                Cancel Job
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="p-6">
+                    <!-- Progress Bar -->
+                    <div class="mb-6">
+                        <div class="flex justify-between text-sm text-gray-600 mb-3">
+                            <div class="flex items-center space-x-4">
+                                <!-- Stage Indicator -->
+                                <div class="stage-indicator" 
+                                     :class="getStageClass(currentJob?.progress?.stage || 'setup')"
+                                     x-text="currentJob?.progress?.message || 'Starting...'"></div>
+                                
+                                <!-- Stage Info -->
+                                <div x-show="currentJob?.progress?.stage_info" class="text-xs bg-gray-100 rounded-lg px-3 py-1">
+                                    <template x-if="currentJob?.progress?.stage === 'setup'">
+                                        <span>
+                                            <span x-text="currentJob.progress.stage_info.files_uploaded"></span> files •
+                                            <span x-text="currentJob.progress.stage_info.table_type"></span> table •
+                                            <span x-text="currentJob.progress.stage_info.processing_mode"></span> mode
+                                        </span>
+                                    </template>
+                                    <template x-if="currentJob?.progress?.stage === 'processing'">
+                                        <span>
+                                            <span x-text="currentJob.progress.stage_info.files_processed"></span> files processed •
+                                            <span x-text="currentJob.progress.stage_info.total_records"></span> records
+                                        </span>
+                                    </template>
+                                    <template x-if="currentJob?.progress?.stage === 'webhook_delivery'">
+                                        <span>
+                                            <span x-text="currentJob.progress.stage_info.records_sent"></span> sent •
+                                            <span x-text="currentJob.progress.stage_info.records_failed"></span> failed •
+                                            <span x-text="currentJob.progress.stage_info.current_rate"></span> req/sec
+                                        </span>
+                                    </template>
+                                </div>
+                            </div>
+                            <span class="font-medium" x-text="Math.round(currentJob?.progress?.percentage || 0) + '%'"></span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                            <div class="bg-gradient-to-r from-primary-500 to-primary-600 h-3 rounded-full progress-bar transition-all duration-500" 
+                                 :style="`width: ${currentJob?.progress?.percentage || 0}%`"></div>
+                        </div>
+                    </div>
+
+                    <!-- Processing Stats -->
+                    <div x-show="currentJob?.progress?.stats" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                        <div class="bg-gray-50 rounded-lg p-4 text-center">
+                            <div class="text-2xl font-bold text-gray-900" x-text="currentJob?.progress?.stats?.total_records || 0"></div>
+                            <div class="text-xs text-gray-500">Total Records</div>
+                        </div>
+                        <div class="bg-green-50 rounded-lg p-4 text-center">
+                            <div class="text-2xl font-bold text-green-600" x-text="currentJob?.progress?.stats?.files_processed || 0"></div>
+                            <div class="text-xs text-gray-500">Files Processed</div>
+                        </div>
+                        <div class="bg-blue-50 rounded-lg p-4 text-center">
+                            <div class="text-2xl font-bold text-blue-600" x-text="currentJob?.progress?.stats?.duplicates_removed || 0"></div>
+                            <div class="text-xs text-gray-500">Duplicates Removed</div>
+                        </div>
+                        <div class="bg-purple-50 rounded-lg p-4 text-center">
+                            <div class="text-2xl font-bold text-purple-600" x-text="Math.round((currentJob?.progress?.stats?.processing_time || 0) * 10) / 10"></div>
+                            <div class="text-xs text-gray-500">Processing Time (s)</div>
+                        </div>
+                    </div>
+
+                    <!-- Webhook Stats -->
+                    <div x-show="currentJob?.progress?.webhook_stats" 
+                         class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 mb-6">
+                        <h4 class="text-sm font-medium text-gray-900 mb-3 flex items-center">
+                            <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z"></path>
+                            </svg>
+                            Webhook Delivery Status
+                            <span x-show="currentJob?.progress?.stage === 'webhook_delivery'"
+                                  class="ml-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
+                                Active
+                            </span>
+                        </h4>
+                        <div class="grid grid-cols-4 gap-4 text-center mb-4">
+                            <div>
+                                <div class="text-lg font-bold text-green-600" x-text="currentJob?.progress?.webhook_stats?.sent || 0"></div>
+                                <div class="text-xs text-gray-500">Sent</div>
+                            </div>
+                            <div>
+                                <div class="text-lg font-bold text-red-600" x-text="currentJob?.progress?.webhook_stats?.failed || 0"></div>
+                                <div class="text-xs text-gray-500">Failed</div>
+                            </div>
+                            <div>
+                                <div class="text-lg font-bold text-blue-600" x-text="currentJob?.progress?.webhook_stats?.current_rate || 0"></div>
+                                <div class="text-xs text-gray-500">Rate (req/sec)</div>
+                            </div>
+                            <div>
+                                <div class="text-lg font-bold text-indigo-600" x-text="currentJob?.progress?.webhook_stats?.remaining || 0"></div>
+                                <div class="text-xs text-gray-500">Remaining</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Dynamic Rate Control -->
+                        <div x-show="currentJob?.processing_mode === 'webhook' && currentJob?.status === 'webhook_delivery'" class="mt-4">
+                            <label class="block text-xs font-medium text-gray-700 mb-2">Adjust Rate Limit (Real-time)</label>
+                            <div class="flex items-center space-x-3">
+                                <span class="text-xs text-gray-500">1</span>
+                                <input type="range" x-model="adjustedRateLimit" min="1" max="100" 
+                                       @input="updateRateLimit()"
+                                       class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                                <span class="text-xs text-gray-500">100</span>
+                                <span class="text-sm font-medium text-gray-700 min-w-[80px] text-right" x-text="adjustedRateLimit + ' req/sec'"></span>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Changes apply immediately to the active webhook delivery</p>
+                        </div>
+                    </div>
+
+                    <!-- Error Display -->
+                    <div x-show="currentJob?.error" class="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
+                        <div class="flex items-start">
+                            <svg class="h-5 w-5 text-red-400 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                            </svg>
+                            <div class="ml-3">
+                                <h3 class="text-sm font-medium text-red-800">Processing Error</h3>
+                                <div class="mt-2 text-sm text-red-700">
+                                    <p x-text="currentJob.error"></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Completion Message -->
+                    <div x-show="currentJob?.status === 'completed'" 
+                         class="mb-6 bg-green-50 border border-green-200 rounded-lg p-4">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center">
+                                <svg class="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                                </svg>
+                                <div class="ml-3">
+                                    <h3 class="text-sm font-medium text-green-800">Processing Complete</h3>
+                                    <div class="mt-2 text-sm text-green-700">
+                                        <p x-text="'Processed ' + (currentJob?.progress?.stats?.total_records || 0) + ' records in ' + Math.round((currentJob?.progress?.stats?.processing_time || 0) * 10) / 10 + ' seconds'"></p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div x-show="currentJob?.status_info?.completion_info">
+                                <span class="text-xs text-green-600">
+                                    <span x-text="currentJob.status_info.completion_info.files_processed"></span> files •
+                                    <span x-text="Math.round(currentJob.status_info.completion_info.processing_time)"></span>s
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="flex justify-center space-x-4">
+                        <button x-show="currentJob?.status === 'completed'" 
+                                @click="downloadResults()"
+                                class="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-md text-sm font-medium transition-colors pulse-success flex items-center">
+                            <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            Download Processed CSV
+                        </button>
+                        
+                        <button x-show="currentJob?.status === 'completed' || currentJob?.status === 'failed'" 
+                                @click="resetApp()" 
+                                class="bg-gray-600 hover:bg-gray-700 text-white px-6 py-3 rounded-md text-sm font-medium transition-colors flex items-center">
+                            <svg class="h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                            </svg>
+                            Start New Job
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Error Display -->
+            <div x-show="error" x-transition class="mt-6 bg-red-50 border border-red-200 rounded-md p-4">
+                <div class="flex">
+                    <svg class="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                    </svg>
+                    <div class="ml-3">
+                        <h3 class="text-sm font-medium text-red-800">Error</h3>
+                        <p class="mt-1 text-sm text-red-700" x-text="error"></p>
+                        <button @click="error = null" class="mt-2 text-xs text-red-600 hover:text-red-800">Dismiss</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        function csvMergerApp() {
+            return {
+                // Authentication
+                isAuthenticated: false,
+                currentUserId: '',
+                userIdInput: '',
+                currentSessionId: null,
+                
+                // State
+                uploadedFiles: [],
+                currentJob: null,
+                error: null,
+                dragOver: false,
+                socket: null,
+                healthStatus: { status: 'checking', message: 'Checking system status...' },
+                adjustedRateLimit: 10,
+                socketStatus: 'disconnected',
+                sessionId: null,
+                showJobHistory: false,
+                completedJobs: [],
+                notifications: [],
+                isTestingWebhook: false,
+                isTestingN8N: false,
+                n8nStatus: { success: false, message: 'N8N connection status will appear here' },
+                
+                // Configuration
+                config: {
+                    tableType: 'company',
+                    processingMode: 'download',
+                    webhookUrl: '',
+                    rateLimit: 10,
+                    webhookLimit: 0
+                },
+
+                // Computed properties
+                get hasUploadedFiles() {
+                    return this.uploadedFiles.length > 0;
+                },
+
+                get canStartProcessing() {
+                    const hasFiles = this.uploadedFiles.length > 0;
+                    const hasValidConfig = this.config.tableType && this.config.processingMode;
+                    const hasWebhookUrl = this.config.processingMode === 'download' || this.config.webhookUrl;
+                    return hasFiles && hasValidConfig && hasWebhookUrl;
+                },
+
+                get socketStatusText() {
+                    switch(this.socketStatus) {
+                        case 'connected': return 'Connected';
+                        case 'connecting': return 'Connecting...';
+                        case 'disconnected': return 'Disconnected';
+                        default: return 'Unknown';
+                    }
+                },
+
+                // Initialization
+                init() {
+                    // Check for stored user ID
+                    const storedUserId = localStorage.getItem('csvMergerUserId');
+                    if (storedUserId) {
+                        this.currentUserId = storedUserId;
+                        this.isAuthenticated = true;
+                    }
+                    
+                    if (this.isAuthenticated) {
+                        this.initSocket();
+                        this.checkHealth();
+                        this.adjustedRateLimit = this.config.rateLimit;
+                        
+                        // Load job history on startup
+                        this.loadJobHistory();
+                    }
+                },
+
+                // WebSocket event handling
+                initSocket() {
+                    this.socketStatus = 'connecting';
+                    this.socket = io();
+                    
+                    this.socket.on('connect', () => {
+                        console.log('Connected to server');
+                        this.socketStatus = 'connected';
+                        this.addNotification('Connected to server', 'success');
+                    });
+
+                    this.socket.on('disconnect', () => {
+                        console.log('Disconnected from server');
+                        this.socketStatus = 'disconnected';
+                        this.addNotification('Disconnected from server', 'error');
+                    });
+
+                    this.socket.on('connected', (data) => {
+                        console.log('Session established:', data);
+                        this.sessionId = data.session_id;
+                        this.addNotification('Session established', 'success');
+                    });
+
+                    this.socket.on('error', (data) => {
+                        console.error('Socket error:', data);
+                        this.addNotification(`Error: ${data.message}`, 'error');
+                    });
+                    
+                    // Enhanced job progress handling
+                    this.socket.on('job_progress', (data) => {
+                        console.log('Job progress:', data);
+                        if (this.currentJob && this.currentJob.job_id === data.job_id) {
+                            // Update progress data
+                            this.currentJob.progress = {
+                                ...this.currentJob.progress,
+                                ...data
+                            };
+                            
+                            // Update stage-specific information
+                            if (data.stage_info) {
+                                this.currentJob.progress.stage_info = data.stage_info;
+                            }
+                            
+                            // Update processing stats
+                            if (data.stats) {
+                                this.currentJob.progress.stats = {
+                                    ...this.currentJob.progress.stats,
+                                    ...data.stats
+                                };
+                            }
+                            
+                            // Update webhook stats
+                            if (data.webhook_stats) {
+                                this.currentJob.progress.webhook_stats = {
+                                    ...this.currentJob.progress.webhook_stats,
+                                    ...data.webhook_stats
+                                };
+                            }
+                            
+                            // Update status if provided
+                            if (data.status) {
+                                this.currentJob.status = data.status;
+                            }
+                            
+                            // Add notification for important stages
+                            if (data.stage !== this.currentJob.lastStage) {
+                                this.currentJob.lastStage = data.stage;
+                                this.addNotification(data.message, 'info');
+                            }
+                        }
+                    });
+                    
+                    // Enhanced status change handling
+                    this.socket.on('job_status_change', (data) => {
+                        console.log('Job status change:', data);
+                        if (this.currentJob && this.currentJob.job_id === data.job_id) {
+                            // Update job status
+                            this.currentJob.status = data.new_status;
+                            
+                            // Add status info
+                            this.currentJob.status_info = data;
+                            
+                            // Handle completion
+                            if (data.new_status === 'completed') {
+                                this.addNotification('Job completed successfully!', 'success');
+                                this.loadJobHistory();
+                                
+                                // Play success sound if available
+                                const audio = new Audio('/static/success.mp3');
+                                audio.play().catch(() => {}); // Ignore if sound fails
+                            } 
+                            // Handle failure
+                            else if (data.new_status === 'failed') {
+                                this.addNotification('Job failed', 'error');
+                                if (data.error) {
+                                    this.currentJob.error = data.error;
+                                }
+                            }
+                            // Handle other status changes
+                            else {
+                                this.addNotification(`Job ${data.job_id}: ${data.old_status} → ${data.new_status}`, 'info');
+                            }
+                        }
+                    });
+
+                    this.socket.on('session_jobs', (data) => {
+                        console.log('Session jobs:', data);
+                        this.completedJobs = data.jobs || [];
+                    });
+                },
+
+                async checkHealth() {
+                    try {
+                        const response = await fetch('/api/health');
+                        const health = await response.json();
+                        this.healthStatus = {
+                            status: health.status === 'healthy' ? 'healthy' : 'unhealthy',
+                            message: health.status === 'healthy' ? 'System Online' : 'System Issues'
+                        };
+                    } catch (error) {
+                        this.healthStatus = {
+                            status: 'unhealthy',
+                            message: 'Connection Error'
+                        };
+                    }
+                },
+
+                // Notification system
+                addNotification(message, type = 'info') {
+                    const id = Date.now() + Math.random();
+                    const notification = { id, message, type, visible: true };
+                    this.notifications.push(notification);
+                    
+                    // Auto remove after 5 seconds
+                    setTimeout(() => {
+                        this.removeNotification(id);
+                    }, 5000);
+                },
+
+                removeNotification(id) {
+                    const notification = this.notifications.find(n => n.id === id);
+                    if (notification) {
+                        notification.visible = false;
+                        setTimeout(() => {
+                            this.notifications = this.notifications.filter(n => n.id !== id);
+                        }, 300);
+                    }
+                },
+
+                // File handling
+                handleDrop(event) {
+                    this.dragOver = false;
+                    const files = Array.from(event.dataTransfer.files);
+                    this.addFiles(files);
+                },
+
+                handleFileInput(event) {
+                    const files = Array.from(event.target.files);
+                    this.addFiles(files);
+                },
+
+                addFiles(files) {
+                    const csvFiles = files.filter(file => file.name.toLowerCase().endsWith('.csv'));
+                    
+                    if (csvFiles.length !== files.length) {
+                        this.error = 'Only CSV files are allowed';
+                        this.addNotification('Only CSV files are allowed', 'error');
+                        return;
+                    }
+
+                    let addedCount = 0;
+                    csvFiles.forEach(file => {
+                        if (file.size > 20 * 1024 * 1024) {
+                            this.error = `File ${file.name} is too large (max 20MB)`;
+                            this.addNotification(`File ${file.name} is too large`, 'error');
+                            return;
+                        }
+
+                        if (!this.uploadedFiles.find(f => f.name === file.name)) {
+                            this.uploadedFiles.push(file);
+                            addedCount++;
+                        }
+                    });
+
+                    if (addedCount > 0) {
+                        this.addNotification(`Added ${addedCount} file(s)`, 'success');
+                    }
+
+                    // Clear file input
+                    this.$refs.fileInput.value = '';
+                },
+
+                removeFile(index) {
+                    const fileName = this.uploadedFiles[index].name;
+                    this.uploadedFiles.splice(index, 1);
+                    this.addNotification(`Removed ${fileName}`, 'info');
+                },
+
+                async clearFiles() {
+                    try {
+                        const response = await fetch('/api/session/clear', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                user_id: this.currentUserId
+                            }),
+                            credentials: 'include'
+                        });
+                        
+                        if (response.ok) {
+                            const result = await response.json();
+                            this.uploadedFiles = [];
+                            this.addNotification(result.message || 'Files cleared successfully', 'success');
+                        } else {
+                            const error = await response.json();
+                            this.addNotification(error.error || 'Failed to clear files', 'error');
+                        }
+                    } catch (error) {
+                        console.error('Clear files error:', error);
+                        this.addNotification('Failed to clear files', 'error');
+                    }
+                },
+
+                resetSession() {
+                    // Clear all browser data for this session
+                    this.uploadedFiles = [];
+                    this.currentJob = null;
+                    this.completedJobs = [];
+                    this.error = null;
+                    
+                    // Clear all cookies for this domain
+                    document.cookie.split(";").forEach(function(c) { 
+                        document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/"); 
+                    });
+                    
+                    // Force page reload to get fresh session
+                    this.addNotification('Resetting session...', 'info');
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1000);
+                },
+
+                formatFileSize(bytes) {
+                    if (bytes === 0) return '0 Bytes';
+                    const k = 1024;
+                    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                    const i = Math.floor(Math.log(bytes) / Math.log(k));
+                    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                },
+
+                // Job processing
+                async startProcessing() {
+                    if (!this.canStartProcessing) return;
+
+                    this.error = null;
+                    
+                    try {
+                        // Upload files first
+                        const formData = new FormData();
+                        this.uploadedFiles.forEach(file => {
+                            formData.append('files', file);
+                        });
+                        formData.append('user_id', this.currentUserId);
+
+                        this.addNotification('Uploading files...', 'info');
+                        const uploadResponse = await fetch('/api/upload', {
+                            method: 'POST',
+                            body: formData,
+                            credentials: 'same-origin'
+                        });
+
+                        if (!uploadResponse.ok) {
+                            throw new Error(`Upload failed: ${uploadResponse.statusText}`);
+                        }
+
+                        const uploadResult = await uploadResponse.json();
+                        this.currentSessionId = uploadResult.session_id;
+                        console.log('Upload successful, session ID:', this.currentSessionId);
+
+                        // Submit job
+                        const jobData = {
+                            user_id: this.currentUserId,
+                            session_id: this.currentSessionId,
+                            table_type: this.config.tableType,
+                            processing_mode: this.config.processingMode,
+                        };
+
+                        if (this.config.processingMode === 'webhook') {
+                            jobData.webhook_url = this.config.webhookUrl;
+                            jobData.webhook_rate_limit = this.config.rateLimit;
+                            jobData.webhook_limit = this.config.webhookLimit;
+                        }
+
+                        this.addNotification('Submitting job...', 'info');
+                        const jobResponse = await fetch('/api/jobs', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(jobData),
+                            credentials: 'same-origin'
+                        });
+
+                        if (!jobResponse.ok) {
+                            throw new Error(`Job submission failed: ${jobResponse.statusText}`);
+                        }
+
+                        const result = await jobResponse.json();
+                        
+                        this.currentJob = {
+                            job_id: result.job_id,
+                            status: result.status?.status || 'pending',
+                            processing_mode: this.config.processingMode,
+                            progress: {
+                                percentage: 0,
+                                message: 'Job queued for processing...',
+                                stage: 'setup',
+                                stage_info: {
+                                    files_uploaded: this.uploadedFiles.length,
+                                    table_type: this.config.tableType,
+                                    processing_mode: this.config.processingMode
+                                }
+                            }
+                        };
+
+                        // Join the job room for real-time updates
+                        if (this.socket) {
+                            this.socket.emit('join_job', { job_id: result.job_id });
+                        }
+
+                        this.addNotification(`Job ${result.job_id} submitted successfully!`, 'success');
+
+                    } catch (error) {
+                        this.error = error.message;
+                        this.addNotification(`Error: ${error.message}`, 'error');
+                    }
+                },
+
+                async cancelJob() {
+                    if (!this.currentJob) return;
+
+                    try {
+                        const response = await fetch(`/api/jobs/${this.currentJob.job_id}/cancel`, {
+                            method: 'POST',
+                            credentials: 'same-origin'
+                        });
+
+                        if (response.ok) {
+                            this.addNotification('Job cancelled', 'info');
+                        } else {
+                            throw new Error('Failed to cancel job');
+                        }
+                    } catch (error) {
+                        this.addNotification(`Error cancelling job: ${error.message}`, 'error');
+                    }
+                },
+
+                async updateRateLimit() {
+                    if (!this.currentJob || this.config.processingMode !== 'webhook') return;
+
+                    try {
+                        const response = await fetch(`/api/jobs/${this.currentJob.job_id}/rate`, {
+                            method: 'PUT',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                rate_limit: parseInt(this.adjustedRateLimit)
+                            }),
+                            credentials: 'same-origin'
+                        });
+
+                        if (response.ok) {
+                            console.log('Rate limit updated to', this.adjustedRateLimit);
+                        }
+                    } catch (error) {
+                        console.error('Error updating rate limit:', error);
+                    }
+                },
+
+                async downloadResults() {
+                    if (!this.currentJob || this.currentJob.status !== 'completed') return;
+
+                    try {
+                        const response = await fetch(`/api/jobs/${this.currentJob.job_id}/download`, {
+                            credentials: 'same-origin'
+                        });
+                        if (response.ok) {
+                            const blob = await response.blob();
+                            const url = window.URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `${this.config.tableType}_leads_processed.csv`;
+                            document.body.appendChild(a);
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                            document.body.removeChild(a);
+                            this.addNotification('Download started', 'success');
+                        } else {
+                            throw new Error('Download failed');
+                        }
+                    } catch (error) {
+                        this.error = 'Failed to download results: ' + error.message;
+                        this.addNotification(`Download error: ${error.message}`, 'error');
+                    }
+                },
+
+                async downloadJob(jobId) {
+                    try {
+                        const response = await fetch(`/api/jobs/${jobId}/download`, {
+                            credentials: 'same-origin'
+                        });
+                        if (response.ok) {
+                            const blob = await response.blob();
+                            const url = window.URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `job_${jobId}_results.csv`;
+                            document.body.appendChild(a);
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                            document.body.removeChild(a);
+                            this.addNotification('Download started', 'success');
+                        } else {
+                            throw new Error('Download failed');
+                        }
+                    } catch (error) {
+                        this.addNotification(`Download error: ${error.message}`, 'error');
+                    }
+                },
+
+                // Job history
+                async loadJobHistory() {
+                    try {
+                        if (this.socket) {
+                            this.socket.emit('get_session_jobs');
+                        }
+                    } catch (error) {
+                        console.error('Error loading job history:', error);
+                    }
+                },
+
+                selectHistoryJob(job) {
+                    // Could expand this to show job details
+                    console.log('Selected job:', job);
+                },
+
+                // Webhook testing
+                async testWebhook() {
+                    if (!this.config.webhookUrl) return;
+
+                    this.isTestingWebhook = true;
+                    try {
+                        const response = await fetch('/api/webhook/test', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                webhook_url: this.config.webhookUrl
+                            }),
+                            credentials: 'same-origin'
+                        });
+
+                        const result = await response.json();
+                        if (response.ok) {
+                            this.addNotification('Webhook test successful!', 'success');
+                        } else {
+                            this.addNotification(`Webhook test failed: ${result.error}`, 'error');
+                        }
+                    } catch (error) {
+                        this.addNotification(`Webhook test error: ${error.message}`, 'error');
+                    } finally {
+                        this.isTestingWebhook = false;
+                    }
+                },
+
+                // n8n Webhook Testing
+                async testN8NWebhook() {
+                    this.isTestingN8N = true;
+                    try {
+                        const response = await fetch('/api/webhook/test-n8n', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            credentials: 'same-origin'
+                        });
+
+                        const result = await response.json();
+                        if (response.ok) {
+                            this.n8nStatus = { success: true, message: 'n8n connection successful!' };
+                            this.addNotification('n8n webhook is accessible', 'success');
+                        } else {
+                            this.n8nStatus = { success: false, message: `n8n connection failed: ${result.error}` };
+                            this.addNotification(`n8n test failed: ${result.error}`, 'error');
+                        }
+                    } catch (error) {
+                        this.n8nStatus = { success: false, message: `n8n connection error: ${error.message}` };
+                        this.addNotification(`n8n test error: ${error.message}`, 'error');
+                    } finally {
+                        this.isTestingN8N = false;
+                    }
+                },
+
+                // Utility functions
+                getStageClass(stage) {
+                    const stages = ['setup', 'loading', 'processing', 'webhook_delivery', 'completed'];
+                    const currentStage = this.currentJob?.progress?.stage || 'setup';
+                    const currentIndex = stages.indexOf(currentStage);
+                    const targetIndex = stages.indexOf(stage);
+                    
+                    if (targetIndex < currentIndex) return 'completed';
+                    if (targetIndex === currentIndex) return 'active';
+                    return '';
+                },
+
+                getJobStatusColor(status) {
+                    switch(status) {
+                        case 'completed': return 'bg-green-100 text-green-800';
+                        case 'failed': return 'bg-red-100 text-red-800';
+                        case 'processing': return 'bg-blue-100 text-blue-800';
+                        case 'pending': return 'bg-yellow-100 text-yellow-800';
+                        default: return 'bg-gray-100 text-gray-800';
+                    }
+                },
+
+                formatDate(dateString) {
+                    return new Date(dateString).toLocaleString();
+                },
+
+                resetApp() {
+                    this.uploadedFiles = [];
+                    this.currentJob = null;
+                    this.error = null;
+                    this.adjustedRateLimit = this.config.rateLimit;
+                    this.showJobHistory = false;
+                    this.addNotification('Ready for new job', 'success');
+                },
+
+                // Authentication functions
+                authenticate() {
+                    if (!this.userIdInput.trim()) return;
+                    
+                    this.currentUserId = this.userIdInput.trim();
+                    this.isAuthenticated = true;
+                    
+                    // Store in localStorage
+                    localStorage.setItem('csvMergerUserId', this.currentUserId);
+                    
+                    // Initialize app now that we're authenticated
+                    this.initSocket();
+                    this.checkHealth();
+                    this.adjustedRateLimit = this.config.rateLimit;
+                    this.loadJobHistory();
+                    
+                    this.addNotification(`Logged in as ${this.currentUserId}`, 'success');
+                },
+
+                logout() {
+                    this.isAuthenticated = false;
+                    this.currentUserId = '';
+                    this.userIdInput = '';
+                    this.uploadedFiles = [];
+                    this.currentJob = null;
+                    this.completedJobs = [];
+                    this.error = null;
+                    
+                    // Clear localStorage
+                    localStorage.removeItem('csvMergerUserId');
+                    
+                    // Disconnect socket
+                    if (this.socket) {
+                        this.socket.disconnect();
+                        this.socket = null;
+                    }
+                    
+                    this.addNotification('Logged out successfully', 'info');
+                }
+            }
+        }
+    </script>
+</body>
+</html> 

@@ -1,5 +1,6 @@
 import os
 from typing import Dict, Any
+from datetime import timedelta
 
 class Config:
     """Application configuration with environment variable support"""
@@ -19,9 +20,11 @@ class Config:
     # Queue Configuration
     QUEUE_NAME = 'csv_processing'
     
-    # Session Configuration
-    SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-    SESSION_TTL_SECONDS = int(os.getenv('SESSION_TTL_SECONDS', '172800'))  # 48 hours
+    # Session Management
+    SECRET_KEY = os.getenv('SECRET_KEY', 'a-very-secret-key-that-should-be-changed')
+    SESSION_COOKIE_NAME = os.getenv('SESSION_COOKIE_NAME', 'csv_merger_session')
+    SESSION_TTL_SECONDS = int(os.getenv('SESSION_TTL_SECONDS', '172800').split('#')[0].strip())  # 48 hours
+    PERMANENT_SESSION_LIFETIME = timedelta(seconds=SESSION_TTL_SECONDS)
     
     # File Upload Limits
     MAX_FILE_SIZE_MB = int(os.getenv('MAX_FILE_SIZE_MB', '20'))
@@ -49,9 +52,12 @@ class Config:
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO' if IS_PRODUCTION else 'DEBUG')
     LOG_FORMAT = os.getenv('LOG_FORMAT', '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
+    # n8n Configuration
+    N8N_WEBHOOK_URL = os.getenv('N8N_WEBHOOK_URL', 'https://n8n.coldlabs.ai/webhook/csv-header-mapping')
+    
     # Flask Configuration
     FLASK_HOST = os.getenv('FLASK_HOST', '0.0.0.0')
-    FLASK_PORT = int(os.getenv('PORT', os.getenv('FLASK_PORT', '5001')))  # Railway uses PORT
+    FLASK_PORT = int(os.getenv('PORT', os.getenv('FLASK_PORT', '5002')))  # Railway uses PORT
     FLASK_DEBUG = not IS_PRODUCTION and not IS_TESTING
     
     # Security Configuration

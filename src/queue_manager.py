@@ -11,7 +11,8 @@ from rq.registry import StartedJobRegistry, FinishedJobRegistry
 from rq.exceptions import NoSuchJobError
 import time
 
-logger = logging.getLogger(__name__)
+from src.logging_config import setup_module_logger
+logger = setup_module_logger(__name__)
 
 class JobManager:
     """Manages job queue operations with Redis and RQ integration"""
@@ -152,9 +153,75 @@ class JobManager:
             logger.error(f"Failed to enqueue job: {e}")
             raise
     
+    def _broadcast_webhook_status(self, job_id: str, session_id: str, webhook_data: Dict[str, Any]):
+        """Broadcast webhook-specific status updates"""
+        if self.socketio:
+            enhanced_data = {
+                'job_id': job_id,
+                'session_id': session_id,
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'webhook_stage': webhook_data.get('stage', 'unknown'),
+                'webhook_status': webhook_data.get('status', 'unknown'),
+                'webhook_progress': webhook_data.get('progress', {}),
+                'webhook_error': webhook_data.get('error')
+            }
+            
+            # Broadcast to job room and session room
+            self._broadcast_to_job(job_id, 'webhook_status', enhanced_data)
+            self._broadcast_to_session(session_id, 'webhook_status', enhanced_data)
+    
+    def update_webhook_status(self, job_id: str, session_id: str, webhook_data: Dict[str, Any]):
+        """
+        Update webhook-specific status and progress
+        
+        Args:
+            job_id: Job ID
+            session_id: Session ID
+            webhook_data: Webhook status information
+        """
+        try:
+            # Store webhook status with TTL
+            webhook_key = f"webhook_status:{session_id}:{job_id}"
+            self.redis.setex(
+                webhook_key,
+                self.session_ttl,
+                json.dumps(webhook_data)
+            )
+            
+            # Broadcast webhook status
+            self._broadcast_webhook_status(job_id, session_id, webhook_data)
+            
+            logger.debug(f"Updated webhook status for job {job_id}: {webhook_data.get('stage', 'unknown')}")
+            
+        except Exception as e:
+            logger.error(f"Error updating webhook status: {e}")
+    
+    def get_webhook_status(self, job_id: str, session_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get current webhook status
+        
+        Args:
+            job_id: Job ID
+            session_id: Session ID
+            
+        Returns:
+            Webhook status data or None if not found
+        """
+        try:
+            webhook_key = f"webhook_status:{session_id}:{job_id}"
+            webhook_data = self.redis.get(webhook_key)
+            
+            if webhook_data:
+                return json.loads(webhook_data)
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting webhook status: {e}")
+            return None
+    
     def get_job_status(self, job_id: str, session_id: str) -> Dict[str, Any]:
         """
-        Retrieve current job status and progress
+        Retrieve current job status and progress with enhanced webhook information
         
         Args:
             job_id: Job ID to check
@@ -167,6 +234,60 @@ class JobManager:
         if not self._verify_job_access(job_id, session_id):
             raise ValueError("Job not found or access denied")
         
+        try:
+            # Check if this is a synchronous job (starts with 'sync_')
+            if job_id.startswith('sync_'):
+                return self._get_sync_job_status(job_id, session_id)
+            else:
+                return self._get_rq_job_status(job_id, session_id)
+                
+        except Exception as e:
+            logger.error(f"Error getting job status for {job_id}: {e}")
+            raise ValueError(f"Failed to get job status: {str(e)}")
+    
+    def _get_sync_job_status(self, job_id: str, session_id: str) -> Dict[str, Any]:
+        """Get status for synchronous jobs stored directly in Redis"""
+        try:
+            # Get job metadata from Redis
+            job_key = f"job:{session_id}:{job_id}"
+            job_data = self.redis.get(job_key)
+            
+            if not job_data:
+                raise ValueError(f"Synchronous job metadata not found: {job_id}")
+            
+            job_metadata = json.loads(job_data)
+            
+            # Get job results
+            job_results = self._get_job_results(job_id, session_id)
+            
+            # Prepare status response for sync job
+            status_data = {
+                'job_id': job_id,
+                'session_id': session_id,
+                'status': job_metadata.get('status', 'completed'),
+                'created_at': job_metadata.get('created_at'),
+                'started_at': job_metadata.get('started_at'),
+                'completed_at': job_metadata.get('completed_at'),
+                'progress': {
+                    'percentage': job_metadata.get('progress', 100),
+                    'message': job_metadata.get('message', 'Processing completed'),
+                    'stats': job_metadata.get('stats', {}),
+                    'stage': 'completed'
+                },
+                'result_path': job_metadata.get('result_path'),
+                'results': job_results,
+                'error': job_metadata.get('error')
+            }
+            
+            logger.info(f"Retrieved sync job status for {job_id}: {status_data['status']}")
+            return status_data
+            
+        except Exception as e:
+            logger.error(f"Error getting sync job status for {job_id}: {e}")
+            raise
+    
+    def _get_rq_job_status(self, job_id: str, session_id: str) -> Dict[str, Any]:
+        """Get status for RQ jobs"""
         try:
             # Get RQ job
             rq_job = Job.fetch(job_id, connection=self.redis)
@@ -185,6 +306,9 @@ class JobManager:
             progress_data = self.redis.get(progress_key)
             progress = json.loads(progress_data) if progress_data else {}
             
+            # Get webhook status if available
+            webhook_status = self.get_webhook_status(job_id, session_id)
+            
             # Prepare status response
             status_data = {
                 'job_id': job_id,
@@ -197,9 +321,9 @@ class JobManager:
                     'percentage': progress.get('percentage', 0),
                     'message': progress.get('message', ''),
                     'stats': progress.get('stats', {}),
-                    'current_rate': progress.get('current_rate', 0),
-                    'rate_limit': job_metadata.get('webhook_rate_limit', 10)
+                    'stage': progress.get('stage', 'unknown')
                 },
+                'webhook': webhook_status if webhook_status else None,
                 'result': None,
                 'error': None
             }
@@ -228,12 +352,17 @@ class JobManager:
             
             if job_data:
                 job_metadata = json.loads(job_data)
+                # Use the actual status from metadata instead of hardcoding 'expired'
+                status = job_metadata.get('status', 'unknown')
                 return {
                     'job_id': job_id,
                     'session_id': session_id,
-                    'status': 'expired',
+                    'status': status,
                     'created_at': job_metadata.get('created_at'),
-                    'error': 'Job has expired and been cleaned up'
+                    'completed_at': job_metadata.get('completed_at'),
+                    'progress': job_metadata.get('progress', 0),
+                    'webhook': self.get_webhook_status(job_id, session_id),
+                    'results': self._get_job_results(job_id, session_id)
                 }
             else:
                 raise ValueError("Job not found")
@@ -392,33 +521,244 @@ class JobManager:
             
             logger.error(f"Job {job_id} marked as failed: {error}")
     
-    def update_job_progress(self, job_id: str, session_id: str, progress_data: Dict[str, Any]):
+    def update_job_progress(self, job_id: str, stage: str, message: str, percentage: float = None, stats: dict = None, webhook_stats: dict = None):
         """
-        Update job progress and broadcast to clients
+        Update job progress and broadcast via WebSocket
         
         Args:
             job_id: Job ID
-            session_id: Session ID
-            progress_data: Progress information (percentage, message, etc.)
+            stage: Current processing stage
+            message: Progress message
+            percentage: Optional progress percentage
+            stats: Optional processing statistics
+            webhook_stats: Optional webhook delivery statistics
         """
         try:
-            # Store progress in Redis with short TTL
-            progress_key = f"job_progress:{session_id}:{job_id}"
-            progress_info = {
+            # Get job metadata
+            job_metadata = self._get_job_metadata(job_id)
+            if not job_metadata:
+                logger.error(f"Cannot update progress - job {job_id} not found")
+                return
+            
+            session_id = job_metadata.get('session_id')
+            if not session_id:
+                logger.error(f"Cannot update progress - no session ID for job {job_id}")
+                return
+            
+            # Update job metadata
+            job_metadata['last_update'] = datetime.now(timezone.utc).isoformat()
+            job_metadata['stage'] = stage
+            job_metadata['progress'] = percentage or job_metadata.get('progress', 0)
+            
+            # Store updated metadata
+            self._store_job_metadata(job_id, session_id, job_metadata)
+            
+            # Prepare progress data
+            progress_data = {
                 'job_id': job_id,
-                'session_id': session_id,
-                'timestamp': datetime.now(timezone.utc).isoformat(),
-                **progress_data
+                'stage': stage,
+                'status': job_metadata.get('status', 'processing'),
+                'message': message,
+                'percentage': percentage if percentage is not None else job_metadata.get('progress', 0),
+                'timestamp': datetime.now(timezone.utc).isoformat()
             }
             
-            # Store with 1 hour TTL
-            self.redis.setex(progress_key, 3600, json.dumps(progress_info))
+            # Add processing stats if provided
+            if stats:
+                progress_data['stats'] = stats
+            
+            # Add webhook stats if provided
+            if webhook_stats:
+                progress_data['webhook_stats'] = webhook_stats
+            
+            # Add stage-specific information
+            if stage == 'setup':
+                progress_data['stage_info'] = {
+                    'files_uploaded': len(job_metadata.get('files', [])),
+                    'table_type': job_metadata.get('table_type'),
+                    'processing_mode': job_metadata.get('processing_mode')
+                }
+            elif stage == 'processing':
+                progress_data['stage_info'] = {
+                    'current_operation': message,
+                    'files_processed': stats.get('files_processed', 0) if stats else 0,
+                    'total_records': stats.get('total_records', 0) if stats else 0
+                }
+            elif stage == 'webhook_delivery':
+                progress_data['stage_info'] = {
+                    'records_sent': webhook_stats.get('sent', 0) if webhook_stats else 0,
+                    'records_failed': webhook_stats.get('failed', 0) if webhook_stats else 0,
+                    'current_rate': webhook_stats.get('current_rate', 0) if webhook_stats else 0
+                }
             
             # Broadcast progress update
-            self._broadcast_progress_update(job_id, session_id, progress_data)
+            logger.info(f"Broadcasting progress for job {job_id}: {progress_data}")
+            
+            # Emit to both job-specific and session-specific rooms
+            if self.socketio:
+                self.socketio.emit('job_progress', progress_data, room=f"job_{job_id}")
+                self.socketio.emit('job_progress', progress_data, room=f"session_{session_id}")
+            
+            # Store progress data in Redis for recovery
+            progress_key = f"job_progress:{job_id}"
+            self.redis.setex(progress_key, self.session_ttl, json.dumps(progress_data))
             
         except Exception as e:
-            logger.error(f"Error updating job progress: {e}")
+            logger.error(f"Failed to update job progress: {e}")
+            
+    def update_job_status(self, job_id: str, new_status: str, error: str = None):
+        """
+        Update job status and broadcast via WebSocket
+        
+        Args:
+            job_id: Job ID
+            new_status: New job status
+            error: Optional error message
+        """
+        try:
+            # Get job metadata
+            job_metadata = self._get_job_metadata(job_id)
+            if not job_metadata:
+                logger.error(f"Cannot update status - job {job_id} not found")
+                return
+            
+            session_id = job_metadata.get('session_id')
+            if not session_id:
+                logger.error(f"Cannot update status - no session ID for job {job_id}")
+                return
+            
+            # Get old status for change notification
+            old_status = job_metadata.get('status')
+            
+            # Update job metadata
+            job_metadata['status'] = new_status
+            job_metadata['last_update'] = datetime.now(timezone.utc).isoformat()
+            if new_status == 'completed':
+                job_metadata['completed_at'] = datetime.now(timezone.utc).isoformat()
+            if error:
+                job_metadata['error'] = error
+            
+            # Store updated metadata
+            self._store_job_metadata(job_id, session_id, job_metadata)
+            
+            # Prepare status change data
+            status_data = {
+                'job_id': job_id,
+                'old_status': old_status,
+                'new_status': new_status,
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'error': error if error else None,
+                'processing_mode': job_metadata.get('processing_mode'),
+                'table_type': job_metadata.get('table_type')
+            }
+            
+            # Add completion info if job completed
+            if new_status == 'completed':
+                status_data['completion_info'] = {
+                    'processing_time': (
+                        datetime.fromisoformat(job_metadata['completed_at']) -
+                        datetime.fromisoformat(job_metadata['created_at'])
+                    ).total_seconds(),
+                    'files_processed': len(job_metadata.get('files', [])),
+                    'download_available': job_metadata.get('processing_mode') == 'download'
+                }
+            
+            # Broadcast status change
+            logger.info(f"Broadcasting status change for job {job_id}: {status_data}")
+            
+            if self.socketio:
+                self.socketio.emit('job_status_change', status_data, room=f"job_{job_id}")
+                self.socketio.emit('job_status_change', status_data, room=f"session_{session_id}")
+            
+            # Store status data in Redis for recovery
+            status_key = f"job_status:{job_id}"
+            self.redis.setex(status_key, self.session_ttl, json.dumps(status_data))
+            
+        except Exception as e:
+            logger.error(f"Failed to update job status: {e}")
+            
+    def get_job_status(self, job_id: str, session_id: str = None) -> dict:
+        """
+        Get detailed job status
+        
+        Args:
+            job_id: Job ID
+            session_id: Optional session ID for validation
+            
+        Returns:
+            Dictionary with job status information
+        """
+        try:
+            # Get job metadata from RQ Job object if possible
+            job = Job.fetch(job_id, connection=self.redis)
+            job_metadata = job.meta or {}
+            
+            # Add session_id if it's not already in the metadata
+            if 'session_id' not in job_metadata and session_id:
+                job_metadata['session_id'] = session_id
+            
+            # Fallback for sync jobs not in RQ
+            if not job_metadata and session_id:
+                 job_key = f"job:{session_id}:{job_id}"
+                 job_data = self.redis.get(job_key)
+                 if job_data:
+                     job_metadata = json.loads(job_data)
+
+            if not job_metadata:
+                raise ValueError(f"Job {job_id} not found in RQ meta or Redis")
+            
+            # Validate session access if provided
+            if session_id and job_metadata.get('session_id') != session_id:
+                raise ValueError("Access denied")
+            
+            # Get latest progress data
+            progress_key = f"job_progress:{job_id}"
+            progress_data = self.redis.get(progress_key)
+            progress = json.loads(progress_data) if progress_data else {}
+            
+            # Get latest status data
+            status_key = f"job_status:{job_id}"
+            status_data = self.redis.get(status_key)
+            status = json.loads(status_data) if status_data else {}
+            
+            # Get job results if completed
+            results = None
+            if job_metadata.get('status') == 'completed':
+                results_key = f"job_results:{job_metadata['session_id']}:{job_id}"
+                results_data = self.redis.get(results_key)
+                results = json.loads(results_data) if results_data else None
+            
+            # Combine all information
+            return {
+                'job_id': job_id,
+                'status': job_metadata.get('status', 'unknown'),
+                'stage': progress.get('stage', 'unknown'),
+                'message': progress.get('message', ''),
+                'percentage': progress.get('percentage', 0),
+                'created_at': job_metadata.get('created_at'),
+                'last_update': job_metadata.get('last_update'),
+                'completed_at': job_metadata.get('completed_at'),
+                'processing_mode': job_metadata.get('processing_mode'),
+                'table_type': job_metadata.get('table_type'),
+                'error': job_metadata.get('error'),
+                'progress': progress,
+                'status_info': status,
+                'results': results,
+                'files': [
+                    {
+                        'name': f.get('filename'),
+                        'size': f.get('size'),
+                        'upload_time': f.get('upload_time')
+                    }
+                    for f in job_metadata.get('files', [])
+                ]
+            }
+            
+        except ValueError as e:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to get job status: {e}")
+            raise
     
     def get_job_progress(self, job_id: str, session_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -457,7 +797,7 @@ class JobManager:
         def progress_callback(progress_data: Dict[str, Any]):
             """Progress callback that broadcasts updates via SocketIO"""
             try:
-                self.update_job_progress(job_id, session_id, progress_data)
+                self.update_job_progress(job_id, progress_data.get('stage', 'unknown'), progress_data.get('message', ''), progress_data.get('percentage'), progress_data.get('stats'), progress_data.get('webhook_stats'))
             except Exception as e:
                 logger.error(f"Error in progress callback: {e}")
         
@@ -465,29 +805,64 @@ class JobManager:
     
     def get_session_jobs(self, session_id: str) -> List[Dict[str, Any]]:
         """
-        Get all jobs for a session
+        Get all jobs for a session with robust error handling
         
         Args:
             session_id: Session ID
             
         Returns:
-            List of job dictionaries
+            List of job information dictionaries
         """
-        session_jobs_key = f"session:{session_id}:jobs"
-        job_ids = self.redis.smembers(session_jobs_key)
+        try:
+            job_key = f"session:{session_id}:jobs"
+            job_ids = self.redis.smembers(job_key)
         
-        jobs = []
-        for job_id_bytes in job_ids:
-            job_id = job_id_bytes.decode('utf-8')
-            try:
-                job_status = self.get_job_status(job_id, session_id)
-                jobs.append(job_status)
-            except Exception as e:
-                logger.warning(f"Failed to get status for job {job_id}: {e}")
-                # Remove invalid job from session
-                self.redis.srem(session_jobs_key, job_id)
+            jobs = []
+            for job_id_bytes in job_ids:
+                job_id = job_id_bytes.decode('utf-8') if isinstance(job_id_bytes, bytes) else job_id_bytes
+                try:
+                    # Try to get job status, but handle errors gracefully
+                    job_status = self.get_job_status(job_id, session_id)
+                    jobs.append(job_status)
+                except Exception as e:
+                    logger.warning(f"Error getting status for job {job_id}: {e}")
+                    # Try to get basic job info from Redis directly
+                    try:
+                        job_metadata_key = f"job:{session_id}:{job_id}"
+                        job_data = self.redis.get(job_metadata_key)
+                        if job_data:
+                            job_metadata = json.loads(job_data)
+                            # Create a basic job status from metadata
+                            basic_job = {
+                                'job_id': job_id,
+                                'status': job_metadata.get('status', 'unknown'),
+                                'created_at': job_metadata.get('created_at'),
+                                'completed_at': job_metadata.get('completed_at'),
+                                'processing_mode': job_metadata.get('processing_mode', 'download'),
+                                'progress': {
+                                    'percentage': 100 if job_metadata.get('status') == 'completed' else 0,
+                                    'message': job_metadata.get('message', 'Processing completed'),
+                                    'stage': 'completed' if job_metadata.get('status') == 'completed' else 'unknown',
+                                    'result_path': job_metadata.get('result_path'),
+                                    'stats': job_metadata.get('stats', {})
+                                }
+                            }
+                            jobs.append(basic_job)
+                            logger.info(f"Retrieved basic job info for {job_id} from metadata")
+                    except Exception as meta_error:
+                        logger.error(f"Failed to get metadata for job {job_id}: {meta_error}")
+                        # Remove invalid job from session
+                        self.redis.srem(job_key, job_id)
+                        continue
         
-        return jobs
+            # Sort by creation time (newest first)
+            jobs.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+            logger.info(f"Retrieved {len(jobs)} jobs for session {session_id}")
+            return jobs
+        
+        except Exception as e:
+            logger.error(f"Error getting session jobs: {e}")
+            return []
     
     def get_completed_jobs(self, session_id: str) -> List[Dict[str, Any]]:
         """
@@ -554,6 +929,18 @@ class JobManager:
         self.redis.sadd(session_jobs_key, job_id)
         self.redis.expire(session_jobs_key, self.session_ttl)
     
+    def _get_job_results(self, job_id: str, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get job results from Redis"""
+        try:
+            job_results_key = f"job_results:{session_id}:{job_id}"
+            job_results_data = self.redis.get(job_results_key)
+            if job_results_data:
+                return json.loads(job_results_data)
+            return None
+        except Exception as e:
+            logger.error(f"Error getting job results: {e}")
+            return None
+    
     def _verify_job_access(self, job_id: str, session_id: str) -> bool:
         """
         Verify that a session has access to a specific job
@@ -566,8 +953,37 @@ class JobManager:
             True if session has access to the job
         """
         try:
+            logger.info(f"=== JOB ACCESS VERIFICATION ===")
+            logger.info(f"Checking access for job_id: {job_id}")
+            logger.info(f"Session ID: {session_id}")
+            
             job_key = f"session:{session_id}:jobs"
-            return self.redis.sismember(job_key, job_id)
+            logger.info(f"Checking session jobs key: {job_key}")
+            
+            is_member = self.redis.sismember(job_key, job_id)
+            logger.info(f"Job {job_id} found in session jobs: {is_member}")
+            
+            # If not found in session jobs, but it's a sync job, check if job metadata exists
+            if not is_member and job_id.startswith('sync_'):
+                logger.info(f"Job not in session list but is sync job, checking metadata...")
+                job_metadata_key = f"job:{session_id}:{job_id}"
+                logger.info(f"Checking metadata key: {job_metadata_key}")
+                metadata_exists = self.redis.exists(job_metadata_key)
+                logger.info(f"Sync job {job_id} metadata exists: {metadata_exists}")
+                
+                if metadata_exists:
+                    logger.info(f"ACCESS GRANTED via metadata check for sync job {job_id}")
+                    return True
+                else:
+                    logger.error(f"ACCESS DENIED: No metadata found for sync job {job_id}")
+                    return False
+                
+            if is_member:
+                logger.info(f"ACCESS GRANTED via session jobs list for job {job_id}")
+            else:
+                logger.error(f"ACCESS DENIED: Job {job_id} not found in session {session_id}")
+                
+            return is_member
         except Exception as e:
             logger.error(f"Error verifying job access: {e}")
             return False

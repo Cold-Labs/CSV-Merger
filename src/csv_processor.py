@@ -1,464 +1,221 @@
 import pandas as pd
 import numpy as np
-import re
 import logging
-from typing import Dict, List, Tuple, Optional, Callable, Any
-from fuzzywuzzy import fuzz, process
+from typing import Dict, List, Tuple, Optional, Any
+import asyncio
+import time
 from datetime import datetime
-import os
+import json
 
-logger = logging.getLogger(__name__)
+from src.logging_config import setup_module_logger
+from src.config_manager import ConfigManager
+from src.header_mapper import N8NHeaderMapper
+from src.phase1_merger import Phase1Merger
+from src.phase2_standardizer import Phase2Standardizer
+from src.phase3_enricher import Phase3Enricher
+
+logger = setup_module_logger(__name__)
 
 class CSVProcessor:
-    """Handles CSV processing with intelligent header mapping, deduplication, and data cleaning"""
+    """
+    New CSV Processor V2 with three-phase architecture:
     
-    def __init__(self, config_manager, progress_callback: Optional[Callable] = None):
-        """
-        Initialize CSV processor
-        
-        Args:
-            config_manager: Configuration manager instance
-            progress_callback: Optional callback function for progress updates
-        """
+    Phase 1: Raw file merging with source tracking
+    Phase 2: AI-based header standardization using n8n mappings
+    Phase 3: Email enrichment and smart deduplication
+    """
+    
+    def __init__(self, config_manager: ConfigManager, progress_callback=None, redis_client=None, session_manager=None):
         self.config_manager = config_manager
         self.progress_callback = progress_callback
+        self.redis_client = redis_client
+        self.session_manager = session_manager
+        
+        # Initialize phase processors
+        self.header_mapper = N8NHeaderMapper(config_manager.get_n8n_webhook_url())
+        self.phase1_merger = Phase1Merger(progress_callback)
+        self.phase2_standardizer = Phase2Standardizer(config_manager, progress_callback)
+        self.phase3_enricher = Phase3Enricher(config_manager, progress_callback)
+        
+        # Combined stats
         self.stats = {
-            'total_records': 0,
-            'merged_records': 0,
-            'duplicates_removed': 0,
-            'fields_merged': 0,
-            'domains_cleaned': 0,
-            'processing_time': 0
+            'total_processing_time': 0,
+            'phase1_stats': {},
+            'phase2_stats': {},
+            'phase3_stats': {},
+            'n8n_mapping_time': 0
         }
+        
+        logger.info("Initialized CSV Processor with three-phase architecture")
     
-    def _update_progress(self, message: str, percentage: float = None, stats: Dict = None):
-        """Update progress via callback if available"""
+    def _update_progress(self, message: str, percentage: int = None, stage: str = None, 
+                        stats: Dict = None, webhook_stats: Dict = None):
+        """Update progress via callback"""
         if self.progress_callback:
-            self.progress_callback({
-                'message': message,
-                'percentage': percentage,
-                'stats': stats or self.stats
-            })
-        logger.info(f"Progress: {message} ({percentage}%)" if percentage else f"Progress: {message}")
+            self.progress_callback(
+                message=message,
+                stage=stage or 'processing',
+                percentage=percentage,
+                stats=stats,
+                webhook_stats=webhook_stats
+            )
     
-    def map_headers(self, csv_headers: List[str], table_type: str) -> Dict[str, str]:
+    async def process_files(self, file_paths: List[str], table_type: str, session_id: str) -> Tuple[pd.DataFrame, str, Dict]:
         """
-        Use fuzzy matching to map CSV headers to standard names
-        
-        Args:
-            csv_headers: List of CSV column headers
-            table_type: 'company' or 'people'
-            
-        Returns:
-            Dictionary mapping original headers to standard headers
-        """
-        self._update_progress(f"Mapping headers for {table_type} table")
-        
-        # Get field mappings from config
-        if table_type == 'company':
-            standard_mappings = self.config_manager.get_company_mappings()
-        elif table_type == 'people':
-            standard_mappings = self.config_manager.get_people_mappings()
-        else:
-            raise ValueError(f"Invalid table type: {table_type}")
-        
-        header_mapping = {}
-        matched_standards = set()
-        
-        for original_header in csv_headers:
-            best_match = None
-            best_score = 0
-            best_standard = None
-            
-            # Try to match against all standard headers and their alternatives
-            for standard_header, alternatives in standard_mappings.items():
-                # Check direct match with standard header
-                score = fuzz.ratio(original_header.lower(), standard_header.lower())
-                if score > best_score:
-                    best_score = score
-                    best_match = standard_header
-                    best_standard = standard_header
-                
-                # Check against alternatives
-                for alternative in alternatives:
-                    score = fuzz.ratio(original_header.lower(), alternative.lower())
-                    if score > best_score:
-                        best_score = score
-                        best_match = standard_header
-                        best_standard = standard_header
-            
-            # Use match if score is above threshold and standard header not already matched
-            threshold = 85  # Can be made configurable
-            if best_score >= threshold and best_standard not in matched_standards:
-                header_mapping[original_header] = best_match
-                matched_standards.add(best_standard)
-                logger.debug(f"Mapped '{original_header}' to '{best_match}' (score: {best_score})")
-            else:
-                # Keep original header if no good match found
-                header_mapping[original_header] = original_header
-                logger.debug(f"No mapping found for '{original_header}' (best score: {best_score})")
-        
-        logger.info(f"Header mapping complete: {len(header_mapping)} headers processed")
-        return header_mapping
-    
-    def clean_domains(self, df: pd.DataFrame, domain_columns: List[str]) -> pd.DataFrame:
-        """
-        Clean and normalize domain/website fields
-        
-        Args:
-            df: DataFrame to clean
-            domain_columns: List of column names containing domains
-            
-        Returns:
-            DataFrame with cleaned domains
-        """
-        if not domain_columns:
-            return df
-        
-        self._update_progress("Cleaning and normalizing domains")
-        
-        # Get cleaning rules from config
-        cleaning_rules = self.config_manager.get_cleaning_rules()
-        prefixes_to_remove = cleaning_rules.get('domain_prefixes_to_remove', [])
-        suffixes_to_remove = cleaning_rules.get('domain_suffixes_to_remove', [])
-        
-        domains_cleaned = 0
-        
-        for column in domain_columns:
-            if column in df.columns:
-                original_values = df[column].copy()
-                
-                # Clean domains
-                df[column] = df[column].astype(str).apply(lambda x: self._clean_single_domain(
-                    x, prefixes_to_remove, suffixes_to_remove
-                ))
-                
-                # Count how many were actually cleaned
-                domains_cleaned += (original_values != df[column]).sum()
-        
-        self.stats['domains_cleaned'] = domains_cleaned
-        logger.info(f"Cleaned {domains_cleaned} domain entries")
-        return df
-    
-    def _clean_single_domain(self, domain: str, prefixes: List[str], suffixes: List[str]) -> str:
-        """Clean a single domain value"""
-        if pd.isna(domain) or domain in ['nan', 'None', '']:
-            return ''
-        
-        domain = str(domain).strip()
-        
-        # Remove prefixes
-        for prefix in prefixes:
-            if domain.lower().startswith(prefix.lower()):
-                domain = domain[len(prefix):]
-                break
-        
-        # Remove suffixes
-        for suffix in suffixes:
-            if domain.lower().endswith(suffix.lower()):
-                domain = domain[:-len(suffix)]
-                break
-        
-        # Convert to lowercase and strip
-        domain = domain.lower().strip()
-        
-        return domain if domain and domain != 'nan' else ''
-    
-    def normalize_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Normalize and clean data fields
-        
-        Args:
-            df: DataFrame to normalize
-            
-        Returns:
-            DataFrame with normalized data
-        """
-        self._update_progress("Normalizing data fields")
-        
-        # Get cleaning rules
-        cleaning_rules = self.config_manager.get_cleaning_rules()
-        
-        # Normalize whitespace and remove extra spaces
-        if cleaning_rules.get('normalize_whitespace', True):
-            for column in df.select_dtypes(include=['object']).columns:
-                df[column] = df[column].astype(str).apply(lambda x: re.sub(r'\s+', ' ', str(x).strip()) if pd.notna(x) and x != 'nan' else '')
-        
-        # Standardize case for specific field types
-        case_rules = cleaning_rules.get('standardize_case', {})
-        
-        # Title case for names
-        if case_rules.get('names') == 'title_case':
-            name_columns = [col for col in df.columns if any(name_word in col.lower() for name_word in ['name', 'title'])]
-            for column in name_columns:
-                if column in df.columns:
-                    df[column] = df[column].apply(lambda x: str(x).title() if pd.notna(x) and x and x != 'nan' else '')
-        
-        return df
-    
-    def deduplicate_records(self, df: pd.DataFrame, table_type: str) -> pd.DataFrame:
-        """
-        Remove duplicates with smart data merging
-        
-        Args:
-            df: DataFrame to deduplicate
-            table_type: 'company' or 'people'
-            
-        Returns:
-            DataFrame with duplicates removed and data merged
-        """
-        self._update_progress(f"Deduplicating {table_type} records with smart merging")
-        
-        if table_type == 'company':
-            # Company deduplication: Company Name + Company Domain
-            key_columns = ['Company Name', 'Company Domain']
-        elif table_type == 'people':
-            # People deduplication: Full Name + Company Name
-            key_columns = ['Full Name', 'Company Name']
-        else:
-            raise ValueError(f"Invalid table type: {table_type}")
-        
-        # Check if required columns exist
-        available_keys = [col for col in key_columns if col in df.columns]
-        if not available_keys:
-            logger.warning(f"No deduplication key columns found for {table_type}")
-            return df
-        
-        original_count = len(df)
-        logger.info(f"Starting deduplication with {original_count} records using keys: {available_keys}")
-        
-        # Create a composite key for grouping, handling missing values
-        df['_dedup_key'] = df[available_keys].apply(
-            lambda row: '|'.join([str(val).lower().strip() for val in row if pd.notna(val) and str(val).strip()]), 
-            axis=1
-        )
-        
-        # Group by deduplication key and merge data
-        merged_records = []
-        fields_merged = 0
-        
-        for key, group in df.groupby('_dedup_key'):
-            if key == '':  # Skip empty keys
-                merged_records.extend(group.drop('_dedup_key', axis=1).to_dict('records'))
-                continue
-                
-            if len(group) > 1:
-                # Multiple records with same key - merge them
-                merged_record = self._merge_duplicate_records(group.drop('_dedup_key', axis=1))
-                fields_merged += len(group) - 1  # Count merged records
-                merged_records.append(merged_record)
-            else:
-                # Single record - keep as is
-                merged_records.append(group.drop('_dedup_key', axis=1).iloc[0].to_dict())
-        
-        # Create new DataFrame from merged records
-        result_df = pd.DataFrame(merged_records)
-        
-        duplicates_removed = original_count - len(result_df)
-        self.stats['duplicates_removed'] = duplicates_removed
-        self.stats['fields_merged'] = fields_merged
-        self.stats['merged_records'] = len(result_df)
-        
-        logger.info(f"Deduplication complete: {duplicates_removed} duplicates removed, {fields_merged} records merged")
-        return result_df
-    
-    def _merge_duplicate_records(self, records_group: pd.DataFrame) -> Dict:
-        """
-        Merge multiple duplicate records into one complete record
-        
-        Args:
-            records_group: Group of duplicate records
-            
-        Returns:
-            Dictionary representing merged record
-        """
-        merged = {}
-        
-        for column in records_group.columns:
-            # Get all non-empty values for this column
-            values = []
-            for _, row in records_group.iterrows():
-                val = row[column]
-                if pd.notna(val) and str(val).strip() and str(val).lower() not in ['nan', 'none', '']:
-                    values.append(str(val).strip())
-            
-            if values:
-                # Use the longest/most complete value
-                merged[column] = max(values, key=len)
-            else:
-                merged[column] = ''
-        
-        return merged
-    
-    def merge_csv_files(self, file_paths: List[str], table_type: str) -> pd.DataFrame:
-        """
-        Combine multiple CSV files into single DataFrame
-        
-        Args:
-            file_paths: List of CSV file paths
-            table_type: 'company' or 'people'
-            
-        Returns:
-            Combined DataFrame with standardized headers
-        """
-        self._update_progress(f"Merging {len(file_paths)} CSV files")
-        
-        combined_data = []
-        
-        for i, file_path in enumerate(file_paths):
-            try:
-                # Read CSV file with encoding fallback
-                try:
-                    df = pd.read_csv(file_path, encoding='utf-8')
-                except UnicodeDecodeError:
-                    try:
-                        df = pd.read_csv(file_path, encoding='latin-1')
-                        logger.warning(f"File {file_path} read with latin-1 encoding")
-                    except UnicodeDecodeError:
-                        df = pd.read_csv(file_path, encoding='cp1252')
-                        logger.warning(f"File {file_path} read with cp1252 encoding")
-                logger.info(f"Read file {file_path}: {len(df)} records, {len(df.columns)} columns")
-                
-                # Map headers to standard names
-                header_mapping = self.map_headers(df.columns.tolist(), table_type)
-                df = df.rename(columns=header_mapping)
-                
-                # Add to combined data
-                combined_data.append(df)
-                
-                self._update_progress(
-                    f"Processed file {i+1}/{len(file_paths)}: {file_path}",
-                    percentage=(i+1) / len(file_paths) * 30  # 30% for file reading
-                )
-                
-            except Exception as e:
-                logger.error(f"Error processing file {file_path}: {e}")
-                continue
-        
-        if not combined_data:
-            raise ValueError("No valid CSV files to process")
-        
-        # Combine all DataFrames
-        combined_df = pd.concat(combined_data, ignore_index=True, sort=False)
-        self.stats['total_records'] = len(combined_df)
-        
-        logger.info(f"Combined {len(file_paths)} files into {len(combined_df)} total records")
-        return combined_df
-    
-    def export_to_csv(self, df: pd.DataFrame, table_type: str, session_id: str) -> str:
-        """
-        Export processed DataFrame to CSV file
-        
-        Args:
-            df: DataFrame to export
-            table_type: 'company' or 'people' 
-            session_id: Session ID for file organization
-            
-        Returns:
-            Path to exported CSV file
-        """
-        self._update_progress("Exporting processed data to CSV")
-        
-        # Create session directory if it doesn't exist
-        session_dir = f"uploads/{session_id}"
-        os.makedirs(session_dir, exist_ok=True)
-        
-        # Generate filename with timestamp
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M')
-        filename = f"{table_type}_leads_{timestamp}.csv"
-        file_path = os.path.join(session_dir, filename)
-        
-        # Export to CSV
-        df.to_csv(file_path, index=False)
-        
-        logger.info(f"Exported {len(df)} records to {file_path}")
-        return file_path
-    
-    def process_files(self, file_paths: List[str], table_type: str, session_id: str) -> Tuple[pd.DataFrame, str]:
-        """
-        Main processing pipeline
+        Main processing pipeline orchestrating all three phases
         
         Args:
             file_paths: List of CSV file paths to process
-            table_type: 'company' or 'people'
-            session_id: Session ID for file organization
+            table_type: 'people' or 'company'
+            session_id: Session ID for tracking
             
         Returns:
-            Tuple of (processed_dataframe, exported_csv_path)
+            Tuple of (final DataFrame, export file path, n8n_response)
         """
-        start_time = datetime.now()
+        if not file_paths:
+            raise ValueError("No files provided for processing")
+        
+        logger.info(f"=== CSV PROCESSOR: Starting three-phase processing ===")
+        logger.info(f"Files: {[f.split('/')[-1] for f in file_paths]}")
+        logger.info(f"Table type: {table_type}")
+        logger.info(f"Session: {session_id}")
+        
+        start_time = time.time()
         
         try:
-            self._update_progress("Starting CSV processing pipeline", 0)
+            # Phase 0: n8n Header Mapping
+            n8n_response = {}
+            if self.progress_callback:
+                self.progress_callback(percentage=5, message="[1/5] Sending data to n8n for AI mapping...", stage="n8n_mapping")
             
-            # Step 1: Merge CSV files (0-30%)
-            df = self.merge_csv_files(file_paths, table_type)
-            self._update_progress("Files merged successfully", 30)
+            logger.info("🔍 === CSV PROCESSOR N8N DEBUG START ===")
+            logger.info("Requesting header mapping from n8n...")
+            n8n_start_time = time.time()
+            n8n_response = await self.header_mapper.map_headers(
+                file_paths=file_paths,
+                table_type=table_type,
+                session_id=session_id
+            )
+            self.stats['n8n_mapping_time'] = time.time() - n8n_start_time
+            logger.info(f"🔍 N8N Response received in {self.stats['n8n_mapping_time']:.2f}s")
+            logger.info(f"🔍 N8N Response type: {type(n8n_response)}")
+            logger.info(f"🔍 N8N Response content: {json.dumps(n8n_response, indent=2) if n8n_response else 'EMPTY'}")
             
-            # Step 2: Clean domains (30-50%)
-            domain_columns = self._get_domain_columns(df.columns, table_type)
-            df = self.clean_domains(df, domain_columns)
-            self._update_progress("Domain cleaning completed", 50)
+            if self.progress_callback:
+                self.progress_callback(percentage=15, message="[2/5] Received AI mapping from n8n.", stage="n8n_mapping", n8n_response=n8n_response)
             
-            # Step 3: Normalize data (50-70%)
-            df = self.normalize_data(df)
-            self._update_progress("Data normalization completed", 70)
+            # PHASE 1: Merge raw files
+            self._update_progress("Phase 1: Merging raw CSV files", 20, "phase1")
+            logger.info("=== PHASE 1: Raw file merging ===")
+            merged_df = self.phase1_merger.merge_raw_files(file_paths)
+            self.stats['phase1_stats'] = self.phase1_merger.get_stats()
             
-            # Step 4: Deduplicate with smart merging (70-90%)
-            df = self.deduplicate_records(df, table_type)
-            self._update_progress("Deduplication completed", 90)
+            logger.info(f"Phase 1 complete: {len(merged_df)} records merged")
             
-            # Step 5: Export to CSV (90-100%)
-            export_path = self.export_to_csv(df, table_type, session_id)
+            # PHASE 2: Apply AI mappings
+            self._update_progress("Phase 2: Applying AI mappings", 40, "phase2")
+            logger.info("=== PHASE 2: AI-based standardization ===")
+            standardized_df = self.phase2_standardizer.apply_n8n_mappings(merged_df, n8n_response, table_type)
+            self.stats['phase2_stats'] = self.phase2_standardizer.get_stats()
             
-            # Calculate processing time
-            processing_time = (datetime.now() - start_time).total_seconds()
-            self.stats['processing_time'] = processing_time
+            logger.info(f"Phase 2 complete: {len(standardized_df.columns)} standard columns")
             
-            self._update_progress("Processing completed successfully", 100, self.stats)
+            # PHASE 3: Email enrichment and deduplication
+            self._update_progress("Phase 3: Email enrichment and deduplication", 70, "phase3")
+            logger.info("=== PHASE 3: Email enrichment and deduplication ===")
+            final_df = self.phase3_enricher.enrich_and_deduplicate(standardized_df, table_type)
+            self.stats['phase3_stats'] = self.phase3_enricher.get_stats()
             
-            logger.info(f"Processing completed in {processing_time:.2f} seconds")
-            return df, export_path
+            logger.info(f"Phase 3 complete: {len(final_df)} final records")
+            
+            # Export final results
+            self._update_progress("Exporting final results", 95, "export")
+            export_path = self.phase3_enricher.export_results(final_df, table_type, session_id)
+            
+            # Calculate total processing time
+            self.stats['total_processing_time'] = time.time() - start_time
+            
+            # Final progress update
+            self._update_progress("Processing completed successfully", 100, "completed", 
+                                stats=self.get_processing_stats())
+            
+            # Log final summary
+            logger.info(f"✅ ALL PHASES COMPLETED SUCCESSFULLY:")
+            logger.info(f"   • Total processing time: {self.stats['total_processing_time']:.2f}s")
+            logger.info(f"   • n8n mapping time: {self.stats['n8n_mapping_time']:.2f}s")
+            logger.info(f"   • Phase 1 time: {self.stats['phase1_stats'].get('processing_time', 0):.2f}s")
+            logger.info(f"   • Phase 2 time: {self.stats['phase2_stats'].get('processing_time', 0):.2f}s")
+            logger.info(f"   • Phase 3 time: {self.stats['phase3_stats'].get('processing_time', 0):.2f}s")
+            logger.info(f"   • Final records: {len(final_df)}")
+            logger.info(f"   • Export path: {export_path}")
+            
+            return final_df, export_path, n8n_response
             
         except Exception as e:
-            logger.error(f"Processing failed: {e}")
-            self._update_progress(f"Processing failed: {str(e)}", None)
+            logger.error(f"Error during CSV processing pipeline: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             raise
     
-    def _get_domain_columns(self, columns: List[str], table_type: str) -> List[str]:
-        """Get list of columns that contain domain/website data"""
-        domain_keywords = ['domain', 'website', 'url', 'site']
-        return [col for col in columns if any(keyword in col.lower() for keyword in domain_keywords)]
-    
     def get_processing_stats(self) -> Dict[str, Any]:
-        """Get current processing statistics"""
-        return self.stats.copy()
-    
-    def validate_data(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Perform data quality checks
-        
-        Args:
-            df: DataFrame to validate
+        """Get comprehensive processing statistics"""
+        # Combine stats from all phases
+        combined_stats = {
+            'total_processing_time': self.stats['total_processing_time'],
+            'n8n_mapping_time': self.stats['n8n_mapping_time'],
             
-        Returns:
-            Dictionary with validation results
-        """
-        validation_results = {
-            'total_records': len(df),
-            'total_columns': len(df.columns),
-            'empty_records': df.isnull().all(axis=1).sum(),
-            'duplicate_records': df.duplicated().sum(),
-            'column_completeness': {}
+            # Phase 1 stats
+            'files_processed': self.stats['phase1_stats'].get('files_processed', 0),
+            'total_records': self.stats['phase1_stats'].get('total_records', 0),
+            'total_columns': self.stats['phase1_stats'].get('total_columns', 0),
+            
+            # Phase 2 stats  
+            'headers_mapped': self.stats['phase2_stats'].get('headers_mapped', 0),
+            'primary_mappings': self.stats['phase2_stats'].get('primary_mappings', 0),
+            'secondary_mappings': self.stats['phase2_stats'].get('secondary_mappings', 0),
+            'tertiary_mappings': self.stats['phase2_stats'].get('tertiary_mappings', 0),
+            
+            # Phase 3 stats
+            'emails_enriched': self.stats['phase3_stats'].get('emails_enriched', 0),
+            'personal_emails_ranked': self.stats['phase3_stats'].get('personal_emails_ranked', 0),
+            'work_emails_identified': self.stats['phase3_stats'].get('work_emails_identified', 0),
+            'duplicates_removed': self.stats['phase3_stats'].get('duplicates_removed', 0),
+            'records_merged': self.stats['phase3_stats'].get('records_merged', 0),
+            'domains_enriched': self.stats['phase3_stats'].get('domains_enriched', 0),
+            
+            # Final counts
+            'merged_records': self.stats['phase1_stats'].get('total_records', 0) - self.stats['phase3_stats'].get('duplicates_removed', 0),
+            'fields_merged': self.stats['phase3_stats'].get('records_merged', 0),
+            'domains_cleaned': 0  # This would need to be tracked if we want it
         }
         
-        # Check completeness of each column
-        for column in df.columns:
-            non_empty = df[column].notna().sum()
-            completeness = (non_empty / len(df)) * 100 if len(df) > 0 else 0
-            validation_results['column_completeness'][column] = {
-                'non_empty_count': int(non_empty),
-                'completeness_percentage': round(completeness, 2)
-            }
+        # Convert all numpy types to Python native types for JSON serialization
+        def convert_numpy_types(obj):
+            """Recursively convert numpy types to Python native types"""
+            if hasattr(obj, 'item'):  # numpy scalar
+                return obj.item()
+            elif isinstance(obj, dict):
+                return {k: convert_numpy_types(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy_types(v) for v in obj]
+            else:
+                return obj
         
-        return validation_results 
+        return convert_numpy_types(combined_stats)
+    
+    # Legacy methods for compatibility with existing webhook sender
+    def clean_domains(self, df: pd.DataFrame, domain_columns: List[str]) -> pd.DataFrame:
+        """Legacy method for compatibility - domain cleaning is now in Phase 3"""
+        return self.phase3_enricher._clean_domains(df)
+    
+    def normalize_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Legacy method for compatibility - normalization is now in Phase 3"""
+        return self.phase3_enricher._normalize_data(df)
+    
+    def deduplicate_records(self, df: pd.DataFrame, table_type: str) -> pd.DataFrame:
+        """Legacy method for compatibility - deduplication is now in Phase 3"""
+        return self.phase3_enricher._smart_deduplicate(df, table_type)
+    
+    def export_to_csv(self, df: pd.DataFrame, table_type: str, session_id: str) -> str:
+        """Legacy method for compatibility - export is now in Phase 3"""
+        return self.phase3_enricher.export_results(df, table_type, session_id) 

@@ -10,7 +10,9 @@ eventlet.monkey_patch()
 
 import os
 import sys
+import json
 import logging
+import asyncio
 from datetime import datetime, timezone
 from functools import wraps
 
@@ -25,6 +27,7 @@ from config.settings import Config
 from src.session_manager import SessionManager
 from src.queue_manager import JobManager
 from src.config_manager import ConfigManager
+# Removed csv_processor_minimal import - using CSVProcessor instead
 
 # Configure eventlet for async operations
 eventlet.monkey_patch()
@@ -32,43 +35,8 @@ eventlet.monkey_patch()
 # Configure logging
 def setup_logging():
     """Setup logging configuration for production and development"""
-    Config.create_directories()
-    
-    # Configure root logger
-    log_config = Config.get_logging_config()
-    
-    # Setup formatters
-    formatter = logging.Formatter(log_config['format'])
-    
-    # Setup handlers
-    handlers = []
-    
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    handlers.append(console_handler)
-    
-    # File handler for production
-    if Config.IS_PRODUCTION:
-        file_handler = logging.handlers.RotatingFileHandler(
-            filename=os.path.join(Config.LOG_DIR, 'app.log'),
-            maxBytes=10 * 1024 * 1024,  # 10 MB
-            backupCount=5
-        )
-        file_handler.setFormatter(formatter)
-        handlers.append(file_handler)
-    
-    # Configure root logger
-    logging.basicConfig(
-        level=getattr(logging, Config.LOG_LEVEL),
-        handlers=handlers,
-        format=Config.LOG_FORMAT
-    )
-    
-    # Set specific logger levels
-    logging.getLogger('werkzeug').setLevel(logging.WARNING if Config.IS_PRODUCTION else logging.INFO)
-    logging.getLogger('socketio').setLevel(logging.WARNING if Config.IS_PRODUCTION else logging.INFO)
-    logging.getLogger('engineio').setLevel(logging.WARNING if Config.IS_PRODUCTION else logging.INFO)
+    from src.logging_config import setup_app_logging
+    setup_app_logging()
 
 def create_app():
     """Create and configure Flask application"""
@@ -260,52 +228,75 @@ def create_app():
             'headers': dict(request.headers)
         })
     
-    # Add all the existing routes here (file upload, jobs, etc.)
+    @app.route('/api/config', methods=['GET', 'POST'])
+    def api_config():
+        """Get or update application configuration"""
+        try:
+            if request.method == 'POST':
+                # Update config (for admin/authorized users)
+                data = request.get_json()
+                app.config_manager.update_config(data)
+                return jsonify({'success': True, 'message': 'Configuration updated'})
+            else:
+                # Get current config
+                return jsonify(app.config_manager.get_config())
+        except Exception as e:
+            logger.error(f"Error handling config: {e}", exc_info=True)
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+
+    @app.route('/api/login', methods=['POST'])
+    def login():
+        """Login a user and set their ID in the session"""
+        data = request.json
+        user_id = data.get('user_id')
+        if not user_id:
+            return jsonify({'success': False, 'error': 'User ID is required'}), 400
+        
+        session['user_id'] = user_id
+        # Use the user_id as the primary session identifier
+        session['session_id'] = user_id 
+        logger.info(f"User '{user_id}' logged in. Session ID set to '{user_id}'.")
+        
+        return jsonify({'success': True, 'user_id': user_id, 'session_id': user_id})
+
+
+    @app.route('/api/logout', methods=['POST'])
+    def logout():
+        """Logout a user and clear their session"""
+        user_id = session.get('user_id')
+        if user_id and app.session_manager:
+            # The session_id is the user_id, so this deletes the user's data
+            app.session_manager.delete_session(user_id)
+            logger.info(f"Cleared session data for user '{user_id}'.")
+        
+        session.clear()
+        logger.info(f"User '{user_id}' logged out.")
+        return jsonify({'success': True, 'message': 'Logged out successfully'})
+
+
     @app.route('/api/upload', methods=['POST'])
     def upload_files():
         """Handle file upload and store in session"""
         try:
+            user_id = session.get('user_id')
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            session_id = user_id # Use user_id as the session_id
+
+            # Ensure a session exists for the user
+            if app.session_manager and not app.session_manager.get_session(session_id):
+                user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
+                user_agent = request.headers.get('User-Agent')
+                app.session_manager.create_session(user_ip, user_agent, session_id_override=session_id)
+                logger.info(f"Created a new session for user '{user_id}' with session_id '{session_id}'.")
+            
             logger.info(f"=== UPLOAD REQUEST DEBUG ===")
             logger.info(f"Request method: {request.method}")
-            logger.info(f"Request cookies: {dict(request.cookies)}")
-            logger.info(f"Request headers: {dict(request.headers)}")
-            logger.info(f"Flask session before: {dict(session)}")
-            
-            # Get or create session
-            session_id = session.get('session_id')
-            logger.info(f"Session ID from Flask session: {session_id}")
-            
-            # If no session_id, create one using session manager or temporary fallback
-            if not session_id:
-                logger.info("No session_id found, creating new session")
-                if app.session_manager:
-                    # Create proper session using session manager
-                    user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
-                    user_agent = request.headers.get('User-Agent')
-                    session_info = app.session_manager.create_session(user_ip, user_agent)
-                    session_id = session_info.session_id
-                    session['session_id'] = session_id
-                    session.permanent = True
-                    logger.info(f"Created new session for upload: {session_id}")
-                else:
-                    # Fallback to temporary session when session manager disabled
-                    import uuid
-                    session_id = f"temp_{str(uuid.uuid4())[:8]}"
-                    session['session_id'] = session_id
-                    logger.info(f"Created temporary session for upload: {session_id}")
-            else:
-                logger.info(f"Using existing session: {session_id}")
-            
-            logger.info(f"Flask session after: {dict(session)}")
-            
-            # Validate session
-            session_valid = validate_session_id(session_id)
-            logger.info(f"Session validation result: {session_valid}")
+            logger.info(f"User ID: {user_id}")
+            logger.info(f"Session ID: {session_id}")
             logger.info(f"Session manager available: {app.session_manager is not None}")
-            
-            if not session_valid:
-                logger.error(f"Session validation failed for session_id: {session_id}")
-                return jsonify({'error': 'Invalid or expired session'}), 401
             
             # Check if files were uploaded
             if 'files' not in request.files:
@@ -340,9 +331,18 @@ def create_app():
                 
                 total_size += file_size
                 
-                # Store file using session manager or temporary storage
+                # Store file using session manager
                 if app.session_manager:
-                    file_info = app.session_manager.store_file(session_id, file, file.filename)
+                    # Check if this is the first file after a potential session clear
+                    # If there are already 10+ files, force clear and start fresh
+                    session_info = app.session_manager.get_session(session_id, update_access=False)
+                    force_clear = False
+                    if session_info and session_info.files_uploaded >= 10:
+                        logger.warning(f"Session has {session_info.files_uploaded} files, force clearing before upload")
+                        force_clear = True
+                    
+                    file_info = app.session_manager.store_file(session_id, file, file.filename, force_clear=force_clear)
+                    logger.info(f"Stored file {file.filename} for session {session_id}: {file_info}")
                 else:
                     # Temporary storage when session manager is disabled
                     import tempfile
@@ -356,65 +356,114 @@ def create_app():
                         'path': file_path,
                         'upload_time': datetime.now(timezone.utc).isoformat()
                     }
+                    logger.info(f"Stored file {file.filename} temporarily: {file_info}")
                 uploaded_files.append(file_info)
             
-            # Update session with uploaded files info
+            # Set Flask session for download access
+            session['session_id'] = session_id
+            session['user_id'] = user_id
+            
+            # Verify the session and files after upload
             if app.session_manager:
-                session_info = app.session_manager.get_session(session_id)
-                if session_info:
-                    session_info.files_uploaded = True
-                    session_info.uploaded_files = uploaded_files
-                    session_info.total_file_size = total_size
-                    app.session_manager._save_session(session_info)
-            else:
-                # Store in Flask session when session manager is disabled
-                session['uploaded_files'] = uploaded_files
-                session['total_file_size'] = total_size
-                session['files_uploaded'] = True
+                verification_session = app.session_manager.get_session(session_id)
+                verification_files = app.session_manager.get_session_files(session_id)
+                logger.info(f"POST-UPLOAD VERIFICATION:")
+                logger.info(f"Session exists: {verification_session is not None}")
+                if verification_session:
+                    logger.info(f"Session files_uploaded count: {verification_session.files_uploaded}")
+                logger.info(f"Files in session: {len(verification_files)}")
+                logger.info(f"File details: {verification_files}")
             
             logger.info(f"Successfully uploaded {len(uploaded_files)} files for session {session_id}")
+            logger.info(f"Uploaded files: {[f['filename'] for f in uploaded_files]}")
             
             return jsonify({
                 'success': True,
                 'message': f'Successfully uploaded {len(uploaded_files)} files',
                 'files': uploaded_files,
-                'total_size': total_size
+                'total_size': total_size,
+                'session_id': session_id
             }), 200
         
         except Exception as e:
-            logger.error(f"File upload error: {e}")
+            logger.error(f"File upload error: {e}", exc_info=True)
             return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/session/clear', methods=['POST'])
+    def clear_session():
+        """Clear all files for the current user's session"""
+        try:
+            user_id = session.get('user_id')
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+            
+            logger.info(f"=== CLEARING SESSION FOR USER: {user_id} ===")
+
+            if app.session_manager:
+                # Check session state before deletion
+                session_info_before = app.session_manager.get_session(user_id)
+                if session_info_before:
+                    logger.info(f"Session before deletion - files: {session_info_before.files_uploaded}, storage: {session_info_before.storage_used_mb}MB")
+                    files_before = app.session_manager.get_session_files(user_id)
+                    logger.info(f"Files in session before deletion: {len(files_before)}")
+                else:
+                    logger.info("No session found before deletion")
+
+                # The session_id is the user_id, so this deletes the user's files and session data
+                deleted = app.session_manager.delete_session(user_id)
+                logger.info(f"Session deletion result: {deleted}")
+                
+                if deleted:
+                    logger.info(f"Cleared session for user '{user_id}'")
+            
+                    # Wait a moment to ensure deletion is complete
+                    import time
+                    time.sleep(0.1)
+                    
+                    # Re-create a fresh session for the user
+                    user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
+                    user_agent = request.headers.get('User-Agent')
+                    new_session = app.session_manager.create_session(ip_address=user_ip, user_agent=user_agent, session_id_override=user_id)
+                    logger.info(f"Created fresh session: {new_session.session_id}, files: {new_session.files_uploaded}")
+                    
+                    # Verify the new session is clean
+                    verification_session = app.session_manager.get_session(user_id)
+                    if verification_session:
+                        logger.info(f"Verification - new session files: {verification_session.files_uploaded}, storage: {verification_session.storage_used_mb}MB")
+                        verification_files = app.session_manager.get_session_files(user_id)
+                        logger.info(f"Verification - files in new session: {len(verification_files)}")
+                    
+                    return jsonify({'success': True, 'message': 'Session cleared and reset successfully.'})
+                else:
+                     return jsonify({'success': False, 'message': 'Failed to clear session.'}), 500
+            
+            return jsonify({'success': True, 'message': 'Session cleared (no session manager).'})
+        
+        except Exception as e:
+            logger.error(f"Error clearing session: {e}", exc_info=True)
+            return jsonify({'error': f'Failed to clear session: {str(e)}'}), 500
+
 
     @app.route('/api/jobs', methods=['POST'])
     def submit_job():
         """Submit a new CSV processing job"""
         try:
-            # Get or create session
-            session_id = session.get('session_id')
+            user_id = session.get('user_id')
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            session_id = user_id # Use user_id as the session_id
             
-            # If no session_id, create one using session manager or temporary fallback
-            if not session_id:
-                if app.session_manager:
-                    # Create proper session using session manager
-                    user_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
-                    user_agent = request.headers.get('User-Agent')
-                    session_info = app.session_manager.create_session(user_ip, user_agent)
-                    session_id = session_info.session_id
-                    session['session_id'] = session_id
-                    session.permanent = True
-                    logger.info(f"Created new session for job submission: {session_id}")
-                else:
-                    # Fallback to temporary session when session manager disabled
-                    import uuid
-                    session_id = f"temp_{str(uuid.uuid4())[:8]}"
-                    session['session_id'] = session_id
-                    logger.info(f"Created temporary session for job submission: {session_id}")
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'Request data required'}), 400
             
-            # Validate session
-            if not validate_session_id(session_id):
-                return jsonify({'error': 'Invalid or expired session'}), 401
+            # The flask_session_id and upload_session_id are now just the session_id
+            flask_session_id = session_id
+            upload_session_id = session_id
             
             # Check job manager availability - if disabled, return mock response
+            logger.info(f"Job manager available: {app.job_manager is not None}")
             if not app.job_manager:
                 import uuid
                 mock_job_id = f"mock_{str(uuid.uuid4())[:8]}"
@@ -432,7 +481,9 @@ def create_app():
                 }), 200
             
             # Get request data
+            logger.info("Getting request data...")
             data = request.get_json()
+            logger.info(f"Request data parsed: {data}")
             if not data:
                 return jsonify({'error': 'Request data required'}), 400
             
@@ -440,42 +491,67 @@ def create_app():
             table_type = data.get('table_type', 'company')  # 'company' or 'people'
             processing_mode = data.get('processing_mode', 'webhook')  # 'webhook' or 'download'
             webhook_url = data.get('webhook_url')
-            webhook_rate_limit = data.get('webhook_rate_limit', 10)
+            webhook_rate_limit = int(data.get('webhook_rate_limit', 10))
+            webhook_limit = int(data.get('webhook_limit', 0))  # 0 = no limit
+            logger.info(f"Job parameters - table_type: {table_type}, mode: {processing_mode}, webhook: {webhook_url}, limit: {webhook_limit}")
             
             # Validate processing mode requirements
             if processing_mode == 'webhook' and not webhook_url:
                 return jsonify({'error': 'Webhook URL required for webhook processing mode'}), 400
             
-            # Get session file list (from session manager or Flask session)
-            if app.session_manager:
-                session_info = app.session_manager.get_session(session_id)
-                if not session_info or not getattr(session_info, 'files_uploaded', False):
+            # Get session file list (from upload session)
+            logger.info("Getting uploaded files from upload session...")
+            logger.info(f"Looking for files in session: {upload_session_id}")
+            if app.session_manager and upload_session_id:
+                logger.info("Using session manager to get files from upload session")
+                session_info = app.session_manager.get_session(upload_session_id)
+                logger.info(f"Upload session info: {session_info}")
+                if session_info:
+                    logger.info(f"Session files_uploaded: {session_info.files_uploaded}")
+                    logger.info(f"Session storage_used_bytes: {session_info.storage_used_bytes}")
+                
+                if not session_info:
+                    logger.error(f"Session not found: {upload_session_id}")
+                    return jsonify({'error': 'Session not found'}), 400
+                elif session_info.files_uploaded == 0:
+                    logger.error(f"No files uploaded - files_uploaded count is 0")
+                    # Let's also check the raw files list to see if there's a mismatch
+                    raw_files = app.session_manager.get_session_files(upload_session_id)
+                    logger.error(f"But raw files list shows: {len(raw_files)} files: {raw_files}")
                     return jsonify({'error': 'No files uploaded for processing'}), 400
-                uploaded_files = getattr(session_info, 'uploaded_files', [])
+                
+                # Get files using the correct method
+                uploaded_files = app.session_manager.get_session_files(upload_session_id)
+                logger.info(f"Uploaded files from session manager: {len(uploaded_files)} files")
+                logger.info(f"File details: {uploaded_files}")
             else:
-                # Check Flask session when session manager is disabled
-                if not session.get('files_uploaded', False):
-                    return jsonify({'error': 'No files uploaded for processing'}), 400
-                uploaded_files = session.get('uploaded_files', [])
+                logger.error(f"Session manager not available ({app.session_manager is not None}) or no upload session ID ({upload_session_id})")
+                return jsonify({'error': 'No files uploaded for processing'}), 400
             
             # Prepare job data
             job_data = {
-                'session_id': session_id,
+                'session_id': flask_session_id,  # Use Flask session for job history
                 'table_type': table_type,
                 'processing_mode': processing_mode,
                 'webhook_url': webhook_url,
                 'webhook_rate_limit': webhook_rate_limit,
+                'webhook_limit': webhook_limit,
                 'files': uploaded_files,
                 'created_by': request.remote_addr,
                 'user_agent': request.headers.get('User-Agent')
             }
             
             # Submit job to queue with fallback to synchronous processing
+            logger.info(f"Submitting job with data: {job_data}")
             try:
+                logger.info("Attempting to enqueue job...")
                 job_id = app.job_manager.enqueue_job(job_data)
+                logger.info(f"Job enqueued successfully with ID: {job_id}")
                 
                 # Get initial job status
-                job_status = app.job_manager.get_job_status(job_id, session_id)
+                logger.info("Getting initial job status...")
+                job_status = app.job_manager.get_job_status(job_id, flask_session_id)
+                logger.info(f"Job status: {job_status}")
                 
                 return jsonify({
                     'success': True,
@@ -497,22 +573,236 @@ def create_app():
                 logger.warning(f"RQ error ({str(e)}), processing synchronously: {sync_job_id}")
                 
                 try:
-                    # Process synchronously
-                    processor = CSVProcessor(app.config_manager)
+                    # Process synchronously with better error handling
+                    logger.info(f"Starting synchronous processing for {len(uploaded_files)} files")
+                    logger.info(f"Uploaded files: {uploaded_files}")
+                    
+                    logger.info("Creating CSV processor...")
+                    try:
+                        # Create a simple progress callback for synchronous processing
+                        def sync_progress_callback(*args, **kwargs):
+                            """Progress callback for synchronous jobs"""
+                            message = kwargs.get('message', 'Processing...')
+                            logger.info(f"Sync progress for {sync_job_id}: {message} | args: {args} | kwargs: {kwargs}")
+                            
+                            # SIMPLE: Use user's name for progress updates
+                            user_name = session.get('user_id', 'anonymous')
+                            
+                            # Emit to both job room and user room
+                            socketio.emit('job_progress', {
+                                'job_id': sync_job_id,
+                                **kwargs
+                            }, room=f"job_{sync_job_id}")
+                            
+                            # Also emit to user room
+                            socketio.emit('job_progress', {
+                                'job_id': sync_job_id,
+                                **kwargs
+                            }, room=f"session_{user_name}")
+                            
+                            socketio.sleep(0.1)
+                        
+                        # Use the updated CSV processor with three-phase processing
+                        from src.csv_processor import CSVProcessor
+                        processor = CSVProcessor(app.config_manager, sync_progress_callback, session_manager=app.session_manager)
+                        logger.info("CSV processor created successfully")
+                    except Exception as e:
+                        logger.error(f"Failed to create CSV processor: {e}")
+                        raise Exception(f"CSV processor creation failed: {e}")
+                    
                     file_paths = [f['path'] for f in uploaded_files]
+                    logger.info(f"File paths to process: {file_paths}")
                     
-                    result_df = processor.process_files(
-                        file_paths=file_paths,
-                        table_type=table_type,
-                        session_id=session_id
-                    )
+                    # Verify files exist
+                    for file_path in file_paths:
+                        if not os.path.exists(file_path):
+                            logger.error(f"File not found: {file_path}")
+                            raise FileNotFoundError(f"File not found: {file_path}")
+                        logger.info(f"File exists: {file_path} ({os.path.getsize(file_path)} bytes)")
                     
-                    # Save result
-                    import tempfile
-                    import os
-                    temp_dir = tempfile.mkdtemp(prefix=f"csv_result_{session_id}_")
-                    result_path = os.path.join(temp_dir, f"{sync_job_id}_merged.csv")
-                    result_df.to_csv(result_path, index=False)
+                    # Add timeout and memory monitoring for large datasets
+                    import signal
+                    import resource
+                    
+                    # Set memory limit (1GB) to prevent system crashes
+                    try:
+                        resource.setrlimit(resource.RLIMIT_AS, (1024*1024*1024, 1024*1024*1024))
+                    except:
+                        pass  # Ignore if cannot set limit
+                    
+                    logger.info("Calling process_files with n8n header mapping...")
+                    try:
+                        # Use the actual CSVProcessor with n8n mapping
+                        logger.info("🔍 Using CSVProcessor with n8n header mapping...")
+                        
+                        # Get file paths from session
+                        file_paths = [file_info['path'] for file_info in uploaded_files]
+                        logger.info(f"File paths: {file_paths}")
+                        
+                        # Check if files exist
+                        for file_path in file_paths:
+                            if not os.path.exists(file_path):
+                                logger.error(f"File does not exist: {file_path}")
+                                raise FileNotFoundError(f"File not found: {file_path}")
+                            logger.info(f"File exists: {file_path}")
+                        
+                        # Create event loop for async processing
+                        try:
+                            loop = asyncio.get_event_loop()
+                        except RuntimeError:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                        
+                        # Process files asynchronously (for n8n mapping)
+                        result_df, export_path, n8n_response = loop.run_until_complete(
+                            processor.process_files(file_paths, table_type, upload_session_id)
+                        )
+                        logger.info(f"Processing completed. Result shape: {result_df.shape}, Export path: {export_path}")
+                        
+                        logger.info("n8n-based CSV processing completed successfully")
+                        
+                    except Exception as e:
+                        logger.error(f"n8n-based CSV processing failed: {e}")
+                        logger.error(f"Exception type: {type(e).__name__}")
+                        import traceback
+                        logger.error(f"Full traceback: {traceback.format_exc()}")
+                        raise
+                    
+                    # Use the export path from process_files
+                    result_path = export_path
+                    
+                    # Handle webhook processing if needed
+                    logger.info(f"DEBUG: processing_mode = '{processing_mode}', webhook_url = '{webhook_url}', webhook_limit = {webhook_limit}")
+                    # Extra debug before webhook block
+                    logger.info(f"WEBHOOK DEBUG: About to process webhooks. processing_mode={processing_mode}, webhook_url={webhook_url}, webhook_limit={webhook_limit}")
+                    logger.info(f"WEBHOOK DEBUG: result_df shape={result_df.shape}, records preview={result_df.to_dict('records')[:1]}")
+                    if processing_mode == 'webhook' and webhook_url:
+                        logger.info(f"Starting webhook delivery for {len(result_df)} records (limit: {webhook_limit})")
+                        try:
+                            from src.webhook_sender import WebhookSender, WebhookConfig
+                            # Apply webhook limit if specified
+                            records = result_df.to_dict('records')
+                            if webhook_limit > 0 and len(records) > webhook_limit:
+                                records = records[:webhook_limit]
+                                logger.info(f"Webhook limit applied: sending {webhook_limit} records out of {len(result_df)} total")
+                            # Initialize webhook sender
+                            webhook_config = WebhookConfig(webhook_url, webhook_rate_limit)
+                            webhook_sender = WebhookSender(webhook_config, sync_progress_callback)
+                            # Send records
+                            webhook_results = webhook_sender.send_records_sync(records)
+                            logger.info(f"WEBHOOK DEBUG: webhook_results={webhook_results}")
+                            logger.info(f"Webhook delivery completed: {webhook_results.get('success_rate', 0):.1f}% success rate")
+                            
+                            # Update job results with webhook info
+                            job_results = {
+                                'webhook_status': 'completed',
+                                'webhook_results': webhook_results,
+                                'webhook_success_rate': webhook_results.get('success_rate', 0),
+                                'webhook_failed_records': webhook_results.get('failed_records', 0),
+                                'webhook_limit_applied': webhook_limit if webhook_limit > 0 else None,
+                                'webhook_records_sent': len(records),
+                                'webhook_total_available': len(result_df),
+                                'download_info': {
+                                    'file_path': result_path,
+                                    'filename': os.path.basename(result_path),
+                                    'stats': {
+                                        'total_records': len(result_df) if hasattr(result_df, '__len__') else 0,
+                                        'duplicates_removed': 0,
+                                        'processing_time_seconds': 0
+                                    }
+                                },
+                                'processing_stats': {
+                                    'total_records': len(result_df) if hasattr(result_df, '__len__') else 0,
+                                    'duplicates_removed': 0,
+                                    'files_processed': len(uploaded_files)
+                                }
+                            }
+                            
+                        except Exception as webhook_error:
+                            logger.error(f"Webhook delivery failed: {webhook_error}")
+                            # Continue with download info only
+                            job_results = {
+                                'webhook_status': 'failed',
+                                'webhook_error': str(webhook_error),
+                                'download_info': {
+                                    'file_path': result_path,
+                                    'filename': os.path.basename(result_path),
+                                    'stats': {
+                                        'total_records': len(result_df) if hasattr(result_df, '__len__') else 0,
+                                        'duplicates_removed': 0,
+                                        'processing_time_seconds': 0
+                                    }
+                                },
+                                'processing_stats': {
+                                    'total_records': len(result_df) if hasattr(result_df, '__len__') else 0,
+                                    'duplicates_removed': 0,
+                                    'files_processed': len(uploaded_files)
+                                }
+                            }
+                    else:
+                        # Download mode - use original job results structure
+                        logger.info(f"DEBUG: Using download mode job results structure")
+                        job_results = {
+                            'download_info': {
+                                'file_path': result_path,
+                                'filename': os.path.basename(result_path),
+                                'stats': {
+                                    'total_records': len(result_df) if hasattr(result_df, '__len__') else 0,
+                                    'duplicates_removed': 0,
+                                    'processing_time_seconds': 0
+                                }
+                            },
+                            'processing_stats': {
+                                'total_records': len(result_df) if hasattr(result_df, '__len__') else 0,
+                                'duplicates_removed': 0,
+                                'files_processed': len(uploaded_files)
+                            }
+                        }
+                    
+                    logger.info(f"About to store job {sync_job_id} in job manager...")
+                    
+                    # Store job information in job manager for download access
+                    logger.info(f"Job manager available: {app.job_manager is not None}")
+                    if app.job_manager:
+                        # SIMPLE: Use user_id (user's name) as the ONLY session identifier
+                        user_name = session.get('user_id', 'anonymous')
+                        
+                        logger.info(f"Storing job {sync_job_id} under user: {user_name}")
+                        
+                        # Create job metadata
+                        job_metadata = {
+                            'session_id': user_name,  # Use user name as session
+                            'user_id': user_name,  # Same as session
+                            'table_type': table_type,
+                            'processing_mode': processing_mode,
+                            'webhook_url': webhook_url,
+                            'webhook_rate_limit': webhook_rate_limit,
+                            'webhook_limit': webhook_limit,
+                            'files': uploaded_files,
+                            'created_by': request.remote_addr,
+                            'user_agent': request.headers.get('User-Agent'),
+                            'created_at': datetime.now(timezone.utc).isoformat(),
+                            'completed_at': datetime.now(timezone.utc).isoformat(),
+                            'status': 'completed',
+                            'progress': 100,
+                            'result_path': export_path,
+                            'stats': processor.get_processing_stats(),
+                            'message': 'Processing completed successfully'
+                        }
+                        
+                        # Store job metadata using user name as session
+                        app.job_manager._store_job_metadata(sync_job_id, user_name, job_metadata)
+                        app.job_manager._add_job_to_session(user_name, sync_job_id)
+                        
+                        # job_results is now defined above based on processing mode
+                        
+                        # Store job results using user name
+                        job_results_key = f"job_results:{user_name}:{sync_job_id}"
+                        app.job_manager.redis.setex(job_results_key, app.job_manager.session_ttl, json.dumps(job_results))
+                        
+                        logger.info(f"Stored synchronous job {sync_job_id} in job manager for download access")
+                    else:
+                        logger.warning(f"Job manager not available, cannot store job {sync_job_id} for download access")
                     
                     return jsonify({
                         'success': True,
@@ -523,15 +813,21 @@ def create_app():
                             'status': 'completed',
                             'progress': 100,
                             'message': 'Processing completed synchronously',
-                            'result_path': result_path,
-                            'records_processed': len(result_df)
+                            'result_path': export_path,
+                            'records_processed': len(result_df) if hasattr(result_df, '__len__') else 0,
+                            'stats': processor.get_processing_stats(),
+                            'n8n_response': n8n_response
                         },
                         'mode': 'synchronous'
                     }), 201
                     
                 except Exception as sync_error:
+                    logger.error(f"REAL ERROR: {sync_error}")
+                    logger.error(f"REAL ERROR TYPE: {type(sync_error).__name__}")
+                    import traceback
+                    logger.error(f"REAL TRACEBACK: {traceback.format_exc()}")
                     return jsonify({
-                        'error': f'Synchronous processing failed: {str(sync_error)}'
+                        'error': f'REAL ERROR: {str(sync_error)} (Type: {type(sync_error).__name__})'
                     }), 500
         
         except Exception as e:
@@ -639,20 +935,64 @@ def create_app():
     def download_csv(job_id):
         """Enhanced CSV download with session validation and proper headers"""
         try:
-            # Validate session
-            session_id = session.get('session_id')
-            if not session_id or not validate_session_id(session_id):
+            logger.info(f"=== DOWNLOAD REQUEST DEBUG for job_id: {job_id} ===")
+            
+            user_id = session.get('user_id')
+            logger.info(f"User ID from session: {user_id}")
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+            
+            session_id = user_id # Use user_id as the session_id
+            logger.info(f"Session ID set to: {session_id}")
+            
+            # For sync jobs, try direct Redis lookup first
+            if job_id.startswith('sync_'):
+                logger.info(f"Detected sync job, attempting direct lookup...")
+                return handle_sync_job_download(job_id, session_id)
+            
+            # For regular RQ jobs, use the job manager
+            if not validate_session_id(session_id):
+                logger.error(f"Session validation failed for: {session_id}")
                 return jsonify({'error': 'Invalid or expired session'}), 401
                 
             # Validate job manager availability
             if not app.job_manager:
                 return jsonify({'error': 'Job manager not available'}), 503
+            
+            logger.info(f"About to verify job access for job_id: {job_id}, session_id: {session_id}")
+            
+            # Debug: Check what's actually in Redis for this session
+            try:
+                session_jobs_key = f"session:{session_id}:jobs"
+                all_jobs = app.job_manager.redis.smembers(session_jobs_key)
+                logger.info(f"All jobs in session {session_id}: {all_jobs}")
+                
+                # Check if job metadata exists
+                job_metadata_key = f"job:{session_id}:{job_id}"
+                metadata_exists = app.job_manager.redis.exists(job_metadata_key)
+                logger.info(f"Job metadata exists at {job_metadata_key}: {metadata_exists}")
+                
+                if metadata_exists:
+                    metadata = app.job_manager.redis.get(job_metadata_key)
+                    logger.info(f"Job metadata: {metadata}")
+                
+                # Check job results
+                job_results_key = f"job_results:{session_id}:{job_id}"
+                results_exist = app.job_manager.redis.exists(job_results_key)
+                logger.info(f"Job results exist at {job_results_key}: {results_exist}")
+                
+            except Exception as debug_e:
+                logger.error(f"Debug info gathering failed: {debug_e}")
                 
             # Verify job access and get job status
             if not app.job_manager._verify_job_access(job_id, session_id):
+                logger.error(f"Job access verification FAILED for job_id: {job_id}, session_id: {session_id}")
                 return jsonify({'error': 'Job not found or access denied'}), 404
+            
+            logger.info(f"Job access verification PASSED")
                 
             # Get detailed job status
+            logger.info(f"Getting job status...")
             job_status = app.job_manager.get_job_status(job_id, session_id)
             
             # Check if job is completed
@@ -667,7 +1007,18 @@ def create_app():
             results = job_status.get('results', {})
             download_info = results.get('download_info')
             
+            # For sync jobs, also check if result_path is directly in job_status
+            if not download_info and job_status.get('result_path'):
+                download_info = {
+                    'file_path': job_status.get('result_path'),
+                    'filename': os.path.basename(job_status.get('result_path')),
+                    'stats': job_status.get('progress', {}).get('stats', {})
+                }
+                logger.info(f"Using result_path from job_status for download: {download_info}")
+            
             if not download_info:
+                logger.error(f"No download info found. job_status keys: {list(job_status.keys())}")
+                logger.error(f"results keys: {list(results.keys()) if results else 'No results'}")
                 return jsonify({'error': 'Download information not found'}), 404
                 
             # Validate file exists and is accessible
@@ -675,13 +1026,91 @@ def create_app():
             if not file_path or not os.path.exists(file_path):
                 return jsonify({'error': 'CSV file not found or has been cleaned up'}), 404
                 
-            # Security check: ensure file is within upload directory
-            upload_dir = os.path.abspath(Config.TEMP_UPLOAD_DIR)
-            file_abs_path = os.path.abspath(file_path)
-            if not file_abs_path.startswith(upload_dir):
-                logger.warning(f"Security violation: attempted access to {file_path} outside upload directory")
-                return jsonify({'error': 'Access denied'}), 403
+            return send_csv_file(file_path, download_info)
+            
+        except Exception as e:
+            logger.error(f"Download error for job {job_id}: {e}", exc_info=True)
+            return jsonify({'error': 'Download failed', 'details': str(e)}), 500
+
+
+    def handle_sync_job_download(job_id: str, session_id: str):
+        """Handle download for synchronous jobs directly from Redis"""
+        try:
+            logger.info(f"=== SYNC JOB DOWNLOAD HANDLER ===")
+            logger.info(f"Job ID: {job_id}, Session ID: {session_id}")
+            
+            # Check job metadata directly in Redis
+            job_metadata_key = f"job:{session_id}:{job_id}"
+            logger.info(f"Checking metadata key: {job_metadata_key}")
+            
+            job_metadata_raw = app.job_manager.redis.get(job_metadata_key)
+            if not job_metadata_raw:
+                logger.error(f"No job metadata found at {job_metadata_key}")
+                return jsonify({'error': 'Job not found'}), 404
+            
+            job_metadata = json.loads(job_metadata_raw)
+            logger.info(f"Found job metadata: {job_metadata}")
+            
+            # Check if job is completed
+            if job_metadata.get('status') != 'completed':
+                return jsonify({
+                    'error': 'Job not completed yet',
+                    'current_status': job_metadata.get('status'),
+                    'message': 'CSV download is only available for completed jobs'
+                }), 400
+            
+            # Get job results
+            job_results_key = f"job_results:{session_id}:{job_id}"
+            logger.info(f"Checking results key: {job_results_key}")
+            
+            job_results_raw = app.job_manager.redis.get(job_results_key)
+            if job_results_raw:
+                job_results = json.loads(job_results_raw)
+                logger.info(f"Found job results: {list(job_results.keys())}")
                 
+                # Try to get download info from results
+                download_info = job_results.get('download_info')
+                if download_info:
+                    file_path = download_info.get('file_path')
+                    logger.info(f"Found file path in download_info: {file_path}")
+                else:
+                    logger.info("No download_info in results")
+            else:
+                logger.info("No job results found")
+                job_results = {}
+                download_info = None
+            
+            # Fallback to result_path from metadata
+            if not download_info:
+                result_path = job_metadata.get('result_path')
+                if result_path:
+                    download_info = {
+                        'file_path': result_path,
+                        'filename': os.path.basename(result_path),
+                        'stats': job_metadata.get('stats', {})
+                    }
+                    logger.info(f"Using result_path from metadata: {result_path}")
+                else:
+                    logger.error("No file path found in either results or metadata")
+                    return jsonify({'error': 'Download file path not found'}), 404
+            
+            # Validate file exists
+            file_path = download_info.get('file_path')
+            if not file_path or not os.path.exists(file_path):
+                logger.error(f"File not found at path: {file_path}")
+                return jsonify({'error': 'CSV file not found or has been cleaned up'}), 404
+            
+            logger.info(f"File exists at: {file_path}")
+            return send_csv_file(file_path, download_info)
+            
+        except Exception as e:
+            logger.error(f"Error in sync job download handler: {e}", exc_info=True)
+            return jsonify({'error': 'Sync job download failed', 'details': str(e)}), 500
+
+
+    def send_csv_file(file_path: str, download_info: dict):
+        """Send CSV file with proper headers"""
+        try:
             # Generate secure filename for download
             original_filename = download_info.get('filename', 'merged_data.csv')
             safe_filename = clean_filename(original_filename)
@@ -705,29 +1134,21 @@ def create_app():
                 'Pragma': 'no-cache',
                 'Expires': '0',
                 'X-CSV-Records': str(file_stats.get('total_records', 0)),
-                'X-CSV-Deduplicated': str(file_stats.get('duplicates_removed', 0)),
-                'X-Processing-Time': str(job_status.get('processing_time_seconds', 0)),
-                'X-Session-ID': session_id[:8] + '...'  # Partial session ID for tracking
+                'X-CSV-Deduplicated': str(file_stats.get('duplicates_removed', 0))
             }
             
-            logger.info(f"Starting CSV download: {safe_filename} ({file_size} bytes) for session {session_id}")
+            logger.info(f"Sending CSV file: {safe_filename} ({file_size} bytes)")
             
-            # Send file with proper cleanup
-            try:
-                return send_file(
-                    file_path,
-                    as_attachment=True,
-                    download_name=safe_filename,
-                    mimetype='text/csv'
-                ), 200, headers
-                
-            except Exception as e:
-                logger.error(f"Error sending file {file_path}: {e}")
-                return jsonify({'error': 'Failed to send file'}), 500
+            return send_file(
+                file_path,
+                as_attachment=True,
+                download_name=safe_filename,
+                mimetype='text/csv'
+            )
                 
         except Exception as e:
-            logger.error(f"Download error for job {job_id}: {e}", exc_info=True)
-            return jsonify({'error': 'Download failed', 'details': str(e)}), 500
+            logger.error(f"Error sending CSV file: {e}", exc_info=True)
+            return jsonify({'error': 'Failed to send file', 'details': str(e)}), 500
 
     @app.route('/api/webhook/test', methods=['POST'])
     def test_webhook():
@@ -794,34 +1215,73 @@ def create_app():
             logger.error(f"Webhook test error: {e}")
             return jsonify({'error': str(e)}), 500
 
+    @app.route('/api/webhook/test-n8n', methods=['POST'])
+    def test_n8n_webhook():
+        """Test n8n webhook endpoint connectivity"""
+        try:
+            from src.header_mapper import N8NHeaderMapper
+            
+            # Create header mapper instance
+            header_mapper = N8NHeaderMapper()
+            
+            # Test webhook connectivity
+            is_accessible = header_mapper.validate_webhook_url()
+            
+            if is_accessible:
+                return jsonify({
+                    'success': True,
+                    'message': 'n8n webhook is accessible',
+                    'webhook_url': header_mapper.webhook_url
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': 'n8n webhook is not accessible',
+                    'webhook_url': header_mapper.webhook_url
+                }), 502
+                
+        except Exception as e:
+            logger.error(f"n8n webhook test error: {e}")
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
+
     # SocketIO event handlers
     @socketio.on('connect')
     def handle_connect():
-        """Handle client connection"""
-        session_id = session.get('session_id')
-        
-        # If no session_id (session manager disabled), create a temporary one
-        if not session_id:
-            import uuid
-            session_id = f"temp_{str(uuid.uuid4())[:8]}"
-            session['session_id'] = session_id
-            logger.info(f"Created temporary session for client: {session_id}")
-        
+        """Handle WebSocket connections"""
+        user_id = session.get('user_id')
+        if not user_id:
+            logger.warning(f"Socket connected without authenticated user. SID: {request.sid}")
+            # Don't reject the connection, just emit a warning
+            emit('connection_status', {
+                'authenticated': False, 
+                'message': 'User not authenticated. Please log in.',
+                'session_id': None,
+                'user_id': None
+            })
+            return
+
+        session_id = user_id
         join_room(f"session_{session_id}")
-        emit('connected', {
+        logger.info(f"User '{user_id}' connected via WebSocket. SID: {request.sid}. Joined room: session_{session_id}")
+        emit('connected', {'session_id': session_id, 'user_id': user_id})
+        emit('connection_status', {
+            'authenticated': True,
+            'message': 'Connected successfully',
             'session_id': session_id,
-            'timestamp': datetime.now(timezone.utc).isoformat(),
-            'mode': 'temporary' if session_id.startswith('temp_') else 'persistent'
+            'user_id': user_id
         })
-        logger.info(f"Client connected to session {session_id}")
 
     @socketio.on('disconnect')
     def handle_disconnect():
         """Handle client disconnection"""
-        session_id = session.get('session_id')
-        if session_id:
+        user_id = session.get('user_id')
+        if user_id:
+            session_id = user_id
             leave_room(f"session_{session_id}")
-            logger.info(f"Client disconnected from session {session_id}")
+            logger.info(f"User '{user_id}' disconnected from WebSocket. SID: {request.sid}. Left room: session_{session_id}")
 
     @socketio.on('ping')
     def handle_ping():
@@ -852,20 +1312,23 @@ def create_app():
 
     @socketio.on('get_session_jobs')
     def handle_get_session_jobs():
-        """Get jobs for current session"""
-        session_id = session.get('session_id')
-        if not session_id:
-            emit('error', {'message': 'Session required'})
+        """Get jobs for current user"""
+        user_id = session.get('user_id')
+        if not user_id:
+            logger.warning(f"get_session_jobs requested without authenticated user.")
+            emit('session_jobs', {'jobs': [], 'error': 'Not authenticated'})
             return
         
+        session_id = user_id
         if app.job_manager:
             try:
                 completed_jobs = app.job_manager.get_completed_jobs(session_id)
+                logger.info(f"Found {len(completed_jobs)} jobs for user {user_id}")
                 emit('session_jobs', {'jobs': completed_jobs})
             except Exception as e:
+                logger.error(f"Failed to get jobs for user {user_id}: {e}", exc_info=True)
                 emit('error', {'message': f'Failed to get jobs: {str(e)}'})
         else:
-            # Return empty jobs list when job manager is disabled
             emit('session_jobs', {'jobs': [], 'message': 'Job manager temporarily disabled'})
 
     @socketio.on('get_job_status')

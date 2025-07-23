@@ -3,10 +3,9 @@
     "Company Name": ["company name", "business name", "organization", "company", "firm", "corp", "enterprise"],
     "Company Domain": ["domain", "website", "url", "web site", "company domain", "site", "company website"],
     "Company Description": ["description", "about", "company description", "business description", "company info"],
-    "Industry": ["industry", "sector", "business type", "category", "vertical", "field"],
+    "Company Industry": ["industry", "sector", "business type", "category", "vertical", "field", "company industry"],
     "Company Employee Count": ["employees", "employee count", "staff size", "team size", "headcount", "company size"],
     "Company LinkedIn": ["linkedin", "linkedin url", "company linkedin", "linkedin page", "li url"],
-    "Company LinkedIn Handle": ["linkedin handle", "linkedin username", "handle", "li handle"],
     "Year Founded": ["founded", "year founded", "established", "inception", "started", "founding year"],
     "Company Location": ["location", "address", "city", "headquarters", "hq", "company location"]
   },
@@ -17,13 +16,17 @@
     "Job Title": ["title", "job title", "position", "role", "designation", "job", "occupation"],
     "LinkedIn Profile": ["linkedin", "linkedin profile", "linkedin url", "profile", "li url", "li profile"],
     "Person Location": ["location", "city", "address", "person location", "based in", "lives in"],
+    "Work Email": ["work email", "business email", "company email", "corporate email", "email", "e-mail", "work e-mail", "business e-mail"],
+    "Personal Email": ["personal email", "private email", "home email", "personal", "email personal", "personal e-mail"],
+    "Phone Number": ["phone", "telephone", "mobile", "cell", "contact number", "phone number", "tel"],
     "Company Name": ["company", "company name", "organization", "employer", "workplace", "firm"],
+    "Company Domain": ["domain", "website", "url", "web site", "company domain", "site", "company website"],
     "Company Description": ["company description", "about company", "description", "company info"],
-    "Company Website": ["website", "company website", "url", "domain", "company url", "site"],
-    "Company LinkedIn URL": ["company linkedin", "linkedin company", "company linkedin url", "company li"],
+    "Company Industry": ["industry", "sector", "business type", "category", "vertical", "field", "company industry"],
     "Company Employee Count": ["employees", "company size", "employee count", "staff size", "headcount"],
-    "Company Location": ["company location", "company address", "company city", "hq", "headquarters"],
-    "Company Revenue": ["revenue", "company revenue", "annual revenue", "turnover", "sales"]
+    "Company LinkedIn": ["linkedin", "linkedin url", "company linkedin", "linkedin page", "li url"],
+    "Year Founded": ["founded", "year founded", "established", "inception", "started", "founding year"],
+    "Company Location": ["company location", "company address", "company city", "hq", "headquarters"]
   },
   "data_cleaning_rules": {
     "domain_prefixes_to_remove": ["https://", "http://", "www.", "www2.", "m.", "mobile."],
@@ -33,6 +36,34 @@
     "standardize_case": {
       "domains": "lowercase",
       "names": "title_case"
-    }
+    },
+    "personal_email_domains": [
+      "gmail.com",
+      "yahoo.com",
+      "yahoo.co.uk",
+      "yahoo.fr",
+      "yahoo.de",
+      "hotmail.com",
+      "hotmail.co.uk",
+      "hotmail.fr",
+      "hotmail.de",
+      "outlook.com",
+      "live.com",
+      "aol.com",
+      "icloud.com",
+      "me.com",
+      "mac.com",
+      "mail.com",
+      "protonmail.com",
+      "proton.me",
+      "yandex.com",
+      "yandex.ru",
+      "msn.com",
+      "zoho.com",
+      "gmx.com",
+      "gmx.de",
+      "web.de",
+      "fastmail.com"
+    ]
   }
 } 

@@ -13,7 +13,8 @@ from apscheduler.triggers.cron import CronTrigger
 import json
 from config.settings import Config
 
-logger = logging.getLogger(__name__)
+from src.logging_config import setup_module_logger
+logger = setup_module_logger(__name__)
 
 class CleanupManager:
     """Manages automated cleanup of temporary files, expired sessions, and data retention"""

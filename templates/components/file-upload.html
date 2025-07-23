@@ -1,0 +1,256 @@
+<!-- File Upload Component -->
+<div x-show="!currentJob && !showJobHistory" class="bg-white shadow rounded-lg mb-6 fade-in">
+    <div class="px-6 py-4 border-b border-gray-200">
+        <h3 class="text-lg font-medium text-gray-900">Upload CSV Files</h3>
+        <p class="text-sm text-gray-500">Upload multiple CSV files for processing (max 20MB per file)</p>
+    </div>
+    
+    <div class="p-6">
+        <!-- File Drop Zone -->
+        <div x-data="{ isDragging: false }"
+             @dragover.prevent="isDragging = true"
+             @dragleave.prevent="isDragging = false"
+             @drop.prevent="isDragging = false; handleDrop($event)"
+             :class="{ 'drag-over': isDragging }"
+             class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center transition-all duration-200 hover:border-gray-400">
+            
+            <div class="space-y-4">
+                <svg class="w-12 h-12 mx-auto text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                </svg>
+                
+                <div>
+                    <p class="text-lg font-medium text-gray-700">Drop CSV files here</p>
+                    <p class="text-sm text-gray-500">or click to browse</p>
+                </div>
+                
+                <input type="file" 
+                       id="csvFiles" 
+                       multiple 
+                       accept=".csv" 
+                       @change="handleFileSelect($event)"
+                       class="hidden">
+                
+                <button @click="$('#csvFiles').click()" 
+                        type="button" 
+                        class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium">
+                    Select Files
+                </button>
+                
+                <div class="text-xs text-gray-500 space-y-1">
+                    <p>• Supported format: CSV files only</p>
+                    <p>• Maximum file size: 20MB per file</p>
+                    <p>• Maximum files: 10 files per session</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Progress -->
+        <div x-show="uploadProgress.show" class="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-medium text-blue-800">Uploading files...</span>
+                <span class="text-sm text-blue-600" x-text="`${uploadProgress.percentage}%`"></span>
+            </div>
+            <div class="w-full bg-blue-200 rounded-full h-2">
+                <div class="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                     :style="`width: ${uploadProgress.percentage}%`"></div>
+            </div>
+            <p class="text-sm text-blue-700 mt-2" x-text="uploadProgress.message"></p>
+        </div>
+
+        <!-- Upload Errors -->
+        <div x-show="uploadErrors.length > 0" class="mt-6 bg-red-50 border border-red-200 rounded-lg p-4">
+            <h4 class="text-sm font-medium text-red-800 mb-2">Upload Errors</h4>
+            <ul class="text-sm text-red-700 space-y-1">
+                <template x-for="error in uploadErrors" :key="error">
+                    <li x-text="error"></li>
+                </template>
+            </ul>
+            <button @click="uploadErrors = []" class="mt-2 text-xs text-red-600 hover:text-red-800">
+                Clear errors
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Uploaded Files List -->
+<div x-show="uploadedFiles.length > 0 && !currentJob" class="mt-6 bg-white shadow rounded-lg fade-in">
+    <div class="px-6 py-4 border-b border-gray-200">
+        <div class="flex items-center justify-between">
+            <h3 class="text-lg font-medium text-gray-900">Uploaded Files</h3>
+            <div class="flex items-center space-x-3">
+                <span class="text-sm text-gray-500" x-text="`${uploadedFiles.length} files`"></span>
+                <button @click="clearFiles()" 
+                        class="text-sm text-red-600 hover:text-red-800">
+                    Clear All
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="p-6">
+        <div class="grid gap-3">
+            <template x-for="(file, index) in uploadedFiles" :key="file.filename">
+                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+                    <div class="flex items-center space-x-3">
+                        <svg class="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                        </svg>
+                        <div>
+                            <div class="text-sm font-medium text-gray-900" x-text="file.filename"></div>
+                            <div class="text-xs text-gray-500" x-text="formatFileSize(file.size)"></div>
+                        </div>
+                    </div>
+                    
+                    <div class="flex items-center space-x-2">
+                        <span class="text-xs text-gray-500" x-text="formatDate(file.upload_time)"></span>
+                        <button @click="removeFile(index)" 
+                                class="text-red-600 hover:text-red-800">
+                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- File Summary -->
+        <div class="mt-4 p-3 bg-blue-50 rounded-lg">
+            <div class="grid grid-cols-3 gap-4 text-center">
+                <div>
+                    <div class="text-lg font-semibold text-blue-600" x-text="uploadedFiles.length"></div>
+                    <div class="text-xs text-blue-700">Files</div>
+                </div>
+                <div>
+                    <div class="text-lg font-semibold text-blue-600" x-text="formatFileSize(getTotalFileSize())"></div>
+                    <div class="text-xs text-blue-700">Total Size</div>
+                </div>
+                <div>
+                    <div class="text-lg font-semibold text-blue-600" x-text="getEstimatedRecords()"></div>
+                    <div class="text-xs text-blue-700">Est. Records</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.drag-over {
+    @apply border-blue-500 bg-blue-50 border-solid;
+    transform: scale(1.02);
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+</style>
+
+<script>
+// File upload helper functions
+function handleDrop(event) {
+    const files = Array.from(event.dataTransfer.files);
+    this.processFiles(files);
+}
+
+function handleFileSelect(event) {
+    const files = Array.from(event.target.files);
+    this.processFiles(files);
+}
+
+function processFiles(files) {
+    this.uploadErrors = [];
+    const validFiles = [];
+
+    // Validate files
+    files.forEach(file => {
+        if (!file.name.toLowerCase().endsWith('.csv')) {
+            this.uploadErrors.push(`${file.name}: Not a CSV file`);
+            return;
+        }
+
+        if (file.size > 20 * 1024 * 1024) { // 20MB
+            this.uploadErrors.push(`${file.name}: File too large (max 20MB)`);
+            return;
+        }
+
+        if (this.uploadedFiles.length + validFiles.length >= 10) {
+            this.uploadErrors.push(`Maximum 10 files allowed`);
+            return;
+        }
+
+        validFiles.push(file);
+    });
+
+    if (validFiles.length > 0) {
+        this.uploadFiles(validFiles);
+    }
+}
+
+function uploadFiles(files) {
+    const formData = new FormData();
+    files.forEach(file => {
+        formData.append('files', file);
+    });
+    formData.append('user_id', this.currentUserId);
+
+    this.uploadProgress = {
+        show: true,
+        percentage: 0,
+        message: 'Preparing upload...'
+    };
+
+    fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        this.uploadProgress.show = false;
+        
+        if (data.success) {
+            this.uploadedFiles = data.files;
+            this.sessionId = data.session_id;
+            this.addNotification('Files uploaded successfully!', 'success');
+        } else {
+            this.addNotification(data.error || 'Upload failed', 'error');
+        }
+    })
+    .catch(error => {
+        this.uploadProgress.show = false;
+        this.addNotification('Upload failed: ' + error.message, 'error');
+    });
+}
+
+function clearFiles() {
+    this.uploadedFiles = [];
+    this.addNotification('Files cleared', 'info');
+}
+
+function removeFile(index) {
+    this.uploadedFiles.splice(index, 1);
+}
+
+function getTotalFileSize() {
+    return this.uploadedFiles.reduce((total, file) => total + (file.size || 0), 0);
+}
+
+function getEstimatedRecords() {
+    // Rough estimate: 100 bytes per record on average
+    const totalSize = this.getTotalFileSize();
+    return Math.round(totalSize / 100);
+}
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+</script> 

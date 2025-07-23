@@ -19,13 +19,11 @@ from src.csv_processor import CSVProcessor
 from src.config_manager import ConfigManager
 from src.webhook_sender import WebhookSender, WebhookConfig
 from src.queue_manager import JobManager
+from src.session_manager import SessionManager
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - [Worker] %(message)s'
-)
-logger = logging.getLogger(__name__)
+from src.logging_config import setup_module_logger
+logger = setup_module_logger(__name__, 'worker.log')
 
 class CSVWorker:
     """Background worker for processing CSV jobs"""
@@ -45,6 +43,7 @@ class CSVWorker:
         # Initialize components
         self.config_manager = ConfigManager(self.config.FIELD_MAPPINGS_FILE)
         self.job_manager = JobManager(redis_connection, self.config)
+        self.session_manager = SessionManager(redis_connection, self.config)
         
         # Create RQ worker with explicit queue
         from rq import Queue
@@ -62,209 +61,149 @@ class CSVWorker:
     
     def process_csv_job(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Process CSV job with real-time progress updates
+        Background job function for processing CSV files with two-step webhook delivery
         
         Args:
-            job_data: Job configuration and parameters
+            job_data: Job data dictionary
             
         Returns:
-            Processing results
+            Job results dictionary
         """
-        job_id = job_data.get('job_id')
-        session_id = job_data.get('session_id')
+        import sys
+        sys.path.append('.')
         
-        logger.info(f"Starting CSV processing job {job_id} by worker {self.worker_name}")
+        from src.config_manager import ConfigManager
+        from src.webhook_sender import WebhookSender, WebhookConfig
         
-        # Create progress callback for real-time updates
-        progress_callback = self.job_manager.create_progress_callback(job_id, session_id)
+        job_id = job_data['job_id']
+        session_id = job_data['session_id']
+        
+        logger.info(f"Starting background job {job_id} for session {session_id}")
         
         try:
-            # Initial progress update
+            # Initialize components
+            config_manager = ConfigManager('config/field_mappings.json')
+            
+            # Create progress callback
+            def progress_callback(progress_data):
+                """Callback to update job progress in Redis"""
+                try:
+                    import redis
+                    from config.settings import Config
+                    
+                    redis_client = redis.from_url(Config.REDIS_URL, decode_responses=True)
+                    job_manager = JobManager(redis_client, Config)
+                    job_manager.update_progress(job_id, session_id, progress_data)
+                except Exception as e:
+                    logger.error(f"Failed to update progress: {e}")
+            
+            # Initialize CSV processor with progress callback
+            processor = CSVProcessor(config_manager, progress_callback)
+            
+            # Update job status to processing
             progress_callback({
-                'message': 'Initializing CSV processing...',
+                'message': 'CSV Processing started',
                 'percentage': 0,
-                'status': 'initializing',
-                'stage': 'setup'
-            })
-            
-            # Extract job parameters
-            table_type = job_data.get('table_type', 'company')
-            processing_mode = job_data.get('processing_mode', 'webhook')
-            webhook_url = job_data.get('webhook_url')
-            webhook_rate_limit = job_data.get('webhook_rate_limit', 10)
-            
-            # Get session files
-            session_files = self.session_manager.get_session_files(session_id)
-            if not session_files:
-                raise ValueError("No files found for processing")
-            
-            progress_callback({
-                'message': f'Found {len(session_files)} files to process',
-                'percentage': 5,
-                'status': 'loading',
-                'stage': 'file_discovery',
-                'file_count': len(session_files)
-            })
-            
-            # Load and process CSV files
-            progress_callback({
-                'message': 'Loading CSV files...',
-                'percentage': 10,
-                'status': 'loading',
-                'stage': 'csv_loading'
-            })
-            
-            # Process CSVs
-            csv_processor = CSVProcessor(self.config_manager.get_field_mappings())
-            
-            progress_callback({
-                'message': 'Processing and merging CSV data...',
-                'percentage': 20,
                 'status': 'processing',
                 'stage': 'csv_processing'
             })
             
-            # Load all CSVs into the processor
-            for i, file_info in enumerate(session_files):
-                file_path = file_info['path']
-                logger.info(f"Loading CSV file: {file_path}")
-                
-                csv_processor.load_csv(file_path, table_type)
-                
-                file_progress = 20 + (30 * (i + 1) / len(session_files))
-                progress_callback({
-                    'message': f'Loaded {i + 1}/{len(session_files)} files',
-                    'percentage': int(file_progress),
-                    'status': 'processing',
-                    'stage': 'csv_loading',
-                    'files_processed': i + 1,
-                    'total_files': len(session_files)
-                })
+            # Process CSV files
+            df, export_path = processor.process_files(
+                job_data['file_paths'],
+                job_data['table_type'],
+                session_id
+            )
             
-            # Merge data
-            progress_callback({
-                'message': 'Merging CSV data...',
-                'percentage': 50,
-                'status': 'processing',
-                'stage': 'merging'
-            })
+            # Get processing statistics
+            stats = processor.get_processing_stats()
             
-            df = csv_processor.merge_dataframes()
-            if df.empty:
-                raise ValueError("No data to process after merging")
-            
-            progress_callback({
-                'message': 'Performing deduplication...',
-                'percentage': 60,
-                'status': 'processing',
-                'stage': 'deduplication'
-            })
-            
-            # Deduplicate
-            df, duplicates_info = csv_processor.smart_deduplicate(df)
-            
-            progress_callback({
-                'message': 'Cleaning and normalizing data...',
-                'percentage': 70,
-                'status': 'processing',
-                'stage': 'cleaning'
-            })
-            
-            # Clean and normalize
-            df = csv_processor.clean_domains(df)
-            df = csv_processor.normalize_data(df)
-            
-            # Prepare results
+            # Prepare base results
             results = {
+                'status': 'completed',
+                'stage': 'csv_processed',
+                'export_path': export_path,
+                'stats': stats,
                 'total_records': len(df),
-                'duplicates_removed': duplicates_info.get('removed_count', 0),
-                'sources_merged': len(session_files),
-                'processing_time': time.time() - job_data.get('start_time', time.time())
+                'processing_time': stats.get('processing_time', 0)
             }
             
-            progress_callback({
-                'message': f'Processed {results["total_records"]} records',
-                'percentage': 80,
-                'status': 'processing',
-                'stage': 'finalizing',
-                'stats': results
-            })
-            
-            # Handle processing mode
-            if processing_mode == 'download':
-                # Export CSV for download
+            # If webhook mode, handle webhook delivery as separate step
+            if job_data.get('processing_mode') == 'webhook' and job_data.get('webhook_url'):
                 progress_callback({
-                    'message': 'Preparing CSV for download...',
-                    'percentage': 85,
-                    'status': 'exporting',
-                    'stage': 'csv_export'
-                })
-                
-                export_path = csv_processor.export_csv(df, session_id, table_type)
-                results['export_path'] = export_path
-                
-                progress_callback({
-                    'message': 'CSV ready for download',
-                    'percentage': 100,
-                    'status': 'completed',
-                    'stage': 'completed'
-                })
-                
-            elif processing_mode == 'webhook':
-                # Send via webhook
-                progress_callback({
-                    'message': 'Preparing webhook delivery...',
-                    'percentage': 85,
-                    'status': 'webhook_delivery',
-                    'stage': 'webhook_setup'
+                    'message': 'CSV Processing completed, preparing webhook delivery',
+                    'percentage': 50,
+                    'status': 'processing',
+                    'stage': 'webhook_preparation'
                 })
                 
                 # Initialize webhook sender
-                webhook_sender = WebhookSender(webhook_url, webhook_rate_limit)
-                
-                # Start rate monitoring thread
-                rate_check_thread = threading.Thread(
-                    target=self._monitor_rate_changes,
-                    args=(job_id, session_id, webhook_sender),
-                    daemon=True
+                webhook_config = WebhookConfig(
+                    url=job_data['webhook_url'],
+                    rate_limit=job_data.get('webhook_rate_limit', 10),
+                    retry_attempts=3,
+                    timeout=30
                 )
-                rate_check_thread.start()
+                webhook_sender = WebhookSender(
+                    webhook_config, 
+                    progress_callback,
+                    table_type=job_data.get('table_type', 'people')
+                )
                 
-                # Convert DataFrame to records and send
+                # Convert DataFrame to records
                 records = df.to_dict('records')
                 
-                progress_callback({
-                    'message': f'Sending {len(records)} records via webhook...',
-                    'percentage': 90,
-                    'status': 'webhook_delivery',
-                    'stage': 'webhook_sending',
-                    'total_records': len(records)
-                })
+                # Apply webhook limit if specified
+                webhook_limit = int(job_data.get('webhook_limit', 0))
+                if webhook_limit > 0 and len(records) > webhook_limit:
+                    records = records[:webhook_limit]
+                    logger.info(f"Webhook limit applied: sending {webhook_limit} records out of {len(df)} total")
                 
-                webhook_results = webhook_sender.send_records_sync(records)
+                # First step: Prepare records
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
                 
-                # Update results with webhook information
-                results.update({
-                    'webhook_status': 'completed',
-                    'webhook_results': webhook_results,
-                    'webhook_success_rate': webhook_results.get('success_rate', 0),
-                    'webhook_failed_records': webhook_results.get('failed_records', 0)
-                })
-                
-                progress_callback({
-                    'message': f'Webhook delivery completed ({webhook_results.get("success_rate", 0):.1f}% success)',
-                    'percentage': 100,
-                    'status': 'completed',
-                    'stage': 'completed',
-                    'webhook_stats': webhook_results
-                })
-                
-                logger.info(f"Webhook delivery completed for job {job_id}: {webhook_results.get('success_rate', 0):.1f}% success rate")
+                try:
+                    # Prepare records
+                    preparation_success = loop.run_until_complete(
+                        webhook_sender.prepare_records(records, webhook_limit=webhook_limit)
+                    )
+                    
+                    if not preparation_success:
+                        raise ValueError("Failed to prepare records for webhook delivery")
+                    
+                    # Second step: Send records
+                    webhook_results = loop.run_until_complete(
+                        webhook_sender.send_records_batch(records)
+                    )
+                    
+                    # Update results with webhook information
+                    results.update({
+                        'webhook_status': webhook_results.get('status', 'failed'),
+                        'webhook_stage': webhook_results.get('stage', 'unknown'),
+                        'webhook_results': webhook_results,
+                        'webhook_success_rate': webhook_results.get('success_rate', 0),
+                        'webhook_failed_records': webhook_results.get('failed_records', 0),
+                        'webhook_limit_applied': webhook_limit if webhook_limit > 0 else None,
+                        'webhook_records_sent': len(records),
+                        'webhook_total_available': len(df),
+                        'webhook_error': webhook_results.get('last_error')
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Webhook delivery failed: {e}")
+                    results.update({
+                        'webhook_status': 'failed',
+                        'webhook_stage': 'failed',
+                        'webhook_error': str(e)
+                    })
+                    raise
+                    
+                finally:
+                    loop.close()
             
             # Mark job as completed
-            self.job_manager.mark_job_completed(job_id, session_id, results)
-            
-            # Final progress update
             progress_callback({
                 'message': 'Job completed successfully',
                 'percentage': 100,
@@ -273,15 +212,12 @@ class CSVWorker:
                 'stats': results
             })
             
-            logger.info(f"Job {job_id} completed successfully by worker {self.worker_name}")
+            logger.info(f"Job {job_id} completed successfully")
             return results
             
         except Exception as e:
             error_msg = f"Job {job_id} failed: {str(e)}"
             logger.error(error_msg, exc_info=True)
-            
-            # Mark job as failed
-            self.job_manager.mark_job_failed(job_id, session_id, str(e))
             
             # Update progress with error
             try:
