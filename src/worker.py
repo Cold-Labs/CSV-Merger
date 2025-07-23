@@ -10,6 +10,8 @@ from rq import Worker, Queue
 from rq.job import Job
 import pandas as pd
 import json
+import uvicorn
+from fastapi import FastAPI
 
 # Add src to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -24,6 +26,23 @@ from src.session_manager import SessionManager
 # Configure logging
 from src.logging_config import setup_module_logger
 logger = setup_module_logger(__name__, 'worker.log')
+
+# FastAPI health check server
+def create_health_app() -> FastAPI:
+    """Create FastAPI app for health checks"""
+    app = FastAPI(title="CSV Worker Health Check", version="1.0.0")
+    
+    @app.get("/health")
+    async def health_check():
+        """Health check endpoint for Railway"""
+        return {"status": "healthy", "service": "csv-worker"}
+    
+    @app.get("/")
+    async def root():
+        """Root endpoint"""
+        return {"message": "CSV Merger Worker is running"}
+    
+    return app
 
 class CSVWorker:
     """Background worker for processing CSV jobs"""
@@ -377,6 +396,27 @@ class WorkerManager:
         
         logger.info("All workers stopped")
 
+def start_health_server(port: int = 8080):
+    """Start FastAPI health check server in background thread"""
+    def run_server():
+        try:
+            app = create_health_app()
+            logger.info(f"Starting health check server on port {port}")
+            uvicorn.run(
+                app, 
+                host="0.0.0.0", 
+                port=port, 
+                log_level="info",
+                access_log=False
+            )
+        except Exception as e:
+            logger.error(f"Health server failed: {e}")
+    
+    health_thread = threading.Thread(target=run_server, daemon=True)
+    health_thread.start()
+    logger.info("Health check server started in background thread")
+    return health_thread
+
 def main():
     """Main entry point for worker process"""
     import argparse
@@ -385,6 +425,7 @@ def main():
     parser.add_argument('--workers', type=int, default=1, help='Number of worker processes')
     parser.add_argument('--redis-url', help='Redis connection URL')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging')
+    parser.add_argument('--health-port', type=int, default=8080, help='Health check server port')
     
     args = parser.parse_args()
     
@@ -394,8 +435,13 @@ def main():
     logger.info(f"Starting CSV Merger Worker - PID: {os.getpid()}")
     logger.info(f"Workers: {args.workers}")
     logger.info(f"Redis URL: {args.redis_url or 'default'}")
+    logger.info(f"Health port: {args.health_port}")
     
     try:
+        # Start health check server in background thread
+        health_thread = start_health_server(args.health_port)
+        
+        # Start worker manager
         manager = WorkerManager(
             num_workers=args.workers,
             redis_url=args.redis_url

@@ -9,6 +9,9 @@ restartPolicyMaxRetries = 3
 preDeployCommand = "python pre-deploy-worker.py"
 # Override incorrect start command
 startCommand = "python -m src.worker"
+# Health check configuration
+healthcheckPath = "/health"
+healthcheckTimeout = 60
 
 [environments.production.variables]
 FLASK_ENV = "production"
