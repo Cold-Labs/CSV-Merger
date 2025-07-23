@@ -47,7 +47,7 @@ class CSVWorker:
         
         # Create RQ worker with explicit queue
         from rq import Queue
-        self.queue = Queue('csv_processing', connection=redis_connection, serializer='json')
+        self.queue = Queue('csv_processing', connection=redis_connection)
         self.worker = Worker(
             [self.queue], 
             connection=redis_connection,

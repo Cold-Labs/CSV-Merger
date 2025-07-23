@@ -30,8 +30,15 @@ class JobManager:
         self.config = config
         self.socketio = socketio  # Add SocketIO for real-time updates
         
-        # Initialize RQ queue with proper serialization
-        self.queue = Queue('csv_processing', connection=redis_connection, serializer='json')
+        # Initialize RQ queue (using default serialization)
+        self.queue = Queue('csv_processing', connection=redis_connection)
+        
+        # Clear any corrupt jobs from the queue on startup
+        try:
+            self.queue.empty()
+            logger.info("Cleared any existing jobs from queue on startup")
+        except Exception as e:
+            logger.warning(f"Could not clear queue on startup: {e}")
         
         # Configuration
         self.session_prefix = "session:"
