@@ -28,10 +28,11 @@ RUN mkdir -p temp_uploads exports logs
 COPY start.sh .
 RUN chmod +x start.sh
 
-# Create non-root user
-RUN groupadd -r appuser && useradd -r -g appuser appuser
-RUN chown -R appuser:appuser /app
-USER appuser
+# Create data directory for mounted volume  
+RUN mkdir -p /app/data
+
+# Note: Running as root to avoid volume permission issues
+# This is common practice for Railway deployments
 
 # Expose port (Railway will set PORT env var)
 EXPOSE 5001

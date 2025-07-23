@@ -5,9 +5,34 @@ echo "Environment: $FLASK_ENV"
 echo "Port: $PORT"
 echo "Redis URL: $REDIS_URL"
 echo "Secret Key set: $([ -n "$SECRET_KEY" ] && echo "Yes" || echo "No")"
+echo "Temp Upload Dir: $TEMP_UPLOAD_DIR"
+echo "Export Dir: $EXPORT_DIR"
+echo "Log Dir: $LOG_DIR"
 
 # Create directories if they don't exist
+echo "Creating default directories..."
 mkdir -p temp_uploads exports logs
+
+echo "Creating volume directories..."
+mkdir -p /app/data/temp_uploads /app/data/exports /app/data/logs
+
+# Create environment-specific directories
+if [ -n "$TEMP_UPLOAD_DIR" ]; then
+    echo "Creating TEMP_UPLOAD_DIR: $TEMP_UPLOAD_DIR"
+    mkdir -p "$TEMP_UPLOAD_DIR"
+fi
+if [ -n "$EXPORT_DIR" ]; then
+    echo "Creating EXPORT_DIR: $EXPORT_DIR"
+    mkdir -p "$EXPORT_DIR"
+fi
+if [ -n "$LOG_DIR" ]; then
+    echo "Creating LOG_DIR: $LOG_DIR"
+    mkdir -p "$LOG_DIR"
+fi
+
+# Test directory permissions
+echo "Testing directory permissions..."
+touch /app/data/temp_uploads/.test 2>/dev/null && rm /app/data/temp_uploads/.test && echo "✅ /app/data/temp_uploads writable" || echo "❌ /app/data/temp_uploads not writable"
 
 # Test if we can import the app
 echo "Testing Python imports..."

@@ -16,6 +16,10 @@ PYTHONUNBUFFERED = "1"
 SECRET_KEY = "change-this-to-a-secure-random-key-in-production"
 # Railway will inject REDIS_URL automatically when Redis service is connected
 LOG_LEVEL = "INFO"
+# Use volume-mounted directories
+TEMP_UPLOAD_DIR = "/app/data/temp_uploads"
+EXPORT_DIR = "/app/data/exports"
+LOG_DIR = "/app/data/logs"
 WEBHOOK_TIMEOUT = "30"
 WEBHOOK_RETRY_ATTEMPTS = "3"
 SESSION_TTL_SECONDS = "172800"
