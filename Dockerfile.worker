@@ -1,4 +1,4 @@
-# Railway Worker Dockerfile for CSV Merger RQ Workers
+# Worker Dockerfile for CSV Merger
 FROM python:3.13-slim
 
 # Set environment variables
@@ -29,5 +29,5 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 RUN chown -R appuser:appuser /app
 USER appuser
 
-# Start RQ worker
-CMD ["sh", "-c", "python -m rq.cli worker --url $REDIS_URL csv_processing"] 
+# Start the RQ worker
+CMD ["python", "-m", "src.worker"] 
