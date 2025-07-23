@@ -3,6 +3,26 @@
  * Alpine.js application with modular component support
  */
 
+// Global error handler to catch Alpine.js issues
+window.addEventListener('error', function(event) {
+    console.error('Global error caught:', event.error);
+});
+
+// Ensure Socket.IO is available
+if (typeof io === 'undefined') {
+    console.error('Socket.IO not loaded');
+    window.io = function() {
+        console.warn('Socket.IO not available, returning mock');
+        return {
+            on: function() {},
+            emit: function() {},
+            connected: false,
+            disconnect: function() {}
+        };
+    };
+}
+
+// Main Alpine.js application function
 function csvMergerApp() {
     return {
         // Authentication & Session
@@ -43,6 +63,7 @@ function csvMergerApp() {
         currentJob: null,
         n8nMappingData: null,
         jobs: [],
+        jobHistory: [], // Add missing jobHistory property
         
         // UI State
         showJobHistory: false,
@@ -57,9 +78,14 @@ function csvMergerApp() {
         // Initialization
         init() {
             console.log('🚀 CSV Merger App Initializing...');
-            this.checkStoredLogin();
-            this.checkSystemHealth();
-            this.loadStoredSettings();
+            try {
+                this.checkStoredLogin();
+                this.checkSystemHealth();
+                this.loadStoredSettings();
+            } catch (error) {
+                console.error('Initialization error:', error);
+                this.showNotification('App initialization failed', 'error');
+            }
         },
 
         // =========================
@@ -67,12 +93,16 @@ function csvMergerApp() {
         // =========================
 
         checkStoredLogin() {
-            const storedUserId = localStorage.getItem('csv_merger_user_id');
-            if (storedUserId) {
-                console.log('👤 Found stored user ID:', storedUserId);
-                this.userName = storedUserId;
-                // Auto-login with stored credentials
-                this.autoLogin(storedUserId);
+            try {
+                const storedUserId = localStorage.getItem('csv_merger_user_id');
+                if (storedUserId) {
+                    console.log('👤 Found stored user ID:', storedUserId);
+                    this.userName = storedUserId;
+                    // Auto-login with stored credentials
+                    this.autoLogin(storedUserId);
+                }
+            } catch (error) {
+                console.error('Error checking stored login:', error);
             }
         },
 
@@ -168,6 +198,7 @@ function csvMergerApp() {
                     this.session.id = null;
                     this.jobs = [];
                     this.completedJobs = [];
+                    this.jobHistory = [];
                     
                     // Clear localStorage
                     localStorage.removeItem('csv_merger_user_id');
@@ -203,104 +234,109 @@ function csvMergerApp() {
             this.socketStatus = 'connecting';
             this.socketStatusText = 'Connecting...';
             
-            this.socket = io({
-                transports: ['websocket'],
-                reconnectionAttempts: 5,
-                reconnectionDelay: 1000,
-            });
+            try {
+                this.socket = io({
+                    transports: ['websocket'],
+                    reconnectionAttempts: 5,
+                    reconnectionDelay: 1000,
+                });
 
-            this.socket.on('connect', () => {
-                console.log('✅ WebSocket connected:', this.socket.id);
-                this.socketStatus = 'connected';
-                this.socketStatusText = 'Connected';
-                this.webSocketState = 'Connected';
-                // Request session jobs after connection
-                this.socket.emit('get_session_jobs');
-            });
+                this.socket.on('connect', () => {
+                    console.log('✅ WebSocket connected:', this.socket.id);
+                    this.socketStatus = 'connected';
+                    this.socketStatusText = 'Connected';
+                    this.webSocketState = 'Connected';
+                    // Request session jobs after connection
+                    this.socket.emit('get_session_jobs');
+                });
 
-            this.socket.on('connected', (data) => {
-                console.log('🔗 Connection confirmed by server:', data);
-                this.session.id = data.session_id;
-                this.session.user_id = data.user_id;
-            });
-
-            this.socket.on('connection_status', (data) => {
-                console.log('📊 Connection status from server:', data);
-                if (data.authenticated) {
-                    console.log('✅ WebSocket authenticated successfully');
+                this.socket.on('connected', (data) => {
+                    console.log('🔗 Connection confirmed by server:', data);
                     this.session.id = data.session_id;
                     this.session.user_id = data.user_id;
-                } else {
-                    console.log('⚠️ WebSocket not authenticated:', data.message);
-                }
-            });
+                });
 
-            this.socket.on('disconnect', (reason) => {
-                console.log('❌ WebSocket disconnected. Reason:', reason);
-                this.socketStatus = 'disconnected';
-                this.socketStatusText = 'Disconnected';
-                this.webSocketState = 'Disconnected';
-            });
+                this.socket.on('connection_status', (data) => {
+                    console.log('📊 Connection status from server:', data);
+                    if (data.authenticated) {
+                        console.log('✅ WebSocket authenticated successfully');
+                        this.session.id = data.session_id;
+                        this.session.user_id = data.user_id;
+                    } else {
+                        console.log('⚠️ WebSocket not authenticated:', data.message);
+                    }
+                });
 
-            this.socket.on('connect_error', (error) => {
-                console.error('❌ WebSocket connection error:', error);
+                this.socket.on('disconnect', (reason) => {
+                    console.log('❌ WebSocket disconnected. Reason:', reason);
+                    this.socketStatus = 'disconnected';
+                    this.socketStatusText = 'Disconnected';
+                    this.webSocketState = 'Disconnected';
+                });
+
+                this.socket.on('connect_error', (error) => {
+                    console.error('❌ WebSocket connection error:', error);
+                    this.socketStatus = 'error';
+                    this.socketStatusText = 'Connection Error';
+                    this.webSocketState = 'Error';
+                });
+
+                this.socket.on('reconnect', (attemptNumber) => {
+                    console.log('🔄 WebSocket reconnected after', attemptNumber, 'attempts');
+                    this.socketStatus = 'connected';
+                    this.socketStatusText = 'Reconnected';
+                    this.webSocketState = 'Connected';
+                    // Request session jobs after reconnection
+                    this.socket.emit('get_session_jobs');
+                });
+
+                this.socket.on('reconnect_attempt', (attemptNumber) => {
+                    console.log('🔄 WebSocket reconnection attempt', attemptNumber);
+                    this.socketStatus = 'reconnecting';
+                    this.socketStatusText = 'Reconnecting...';
+                    this.webSocketState = 'Reconnecting...';
+                });
+
+                this.socket.on('reconnect_error', (error) => {
+                    console.error('❌ WebSocket reconnection error:', error);
+                    this.socketStatus = 'error';
+                    this.socketStatusText = 'Reconnection Failed';
+                    this.webSocketState = 'Error';
+                });
+
+                this.socket.on('reconnect_failed', () => {
+                    console.error('❌ WebSocket reconnection failed permanently');
+                    this.socketStatus = 'failed';
+                    this.socketStatusText = 'Connection Failed';
+                    this.webSocketState = 'Failed';
+                });
+
+                this.socket.on('error', (error) => {
+                    console.error('❌ WebSocket error:', error);
+                    this.socketStatus = 'error';
+                    this.socketStatusText = 'Error';
+                    this.webSocketState = 'Error';
+                });
+
+                this.socket.on('job_progress', (data) => {
+                    console.log('📊 Job Progress:', data);
+                    this.handleJobProgress(data);
+                });
+
+                this.socket.on('job_status_change', (data) => {
+                    console.log('🔄 Job Status Change:', data);
+                    this.handleJobStatusChange(data);
+                });
+
+                this.socket.on('session_jobs', (data) => {
+                    console.log('📋 Session Jobs Received:', data);
+                    this.handleSessionJobs(data);
+                });
+            } catch (error) {
+                console.error('WebSocket setup error:', error);
                 this.socketStatus = 'error';
-                this.socketStatusText = 'Connection Error';
-                this.webSocketState = 'Error';
-            });
-
-            this.socket.on('reconnect', (attemptNumber) => {
-                console.log('🔄 WebSocket reconnected after', attemptNumber, 'attempts');
-                this.socketStatus = 'connected';
-                this.socketStatusText = 'Reconnected';
-                this.webSocketState = 'Connected';
-                // Request session jobs after reconnection
-                this.socket.emit('get_session_jobs');
-            });
-
-            this.socket.on('reconnect_attempt', (attemptNumber) => {
-                console.log('🔄 WebSocket reconnection attempt', attemptNumber);
-                this.socketStatus = 'reconnecting';
-                this.socketStatusText = 'Reconnecting...';
-                this.webSocketState = 'Reconnecting...';
-            });
-
-            this.socket.on('reconnect_error', (error) => {
-                console.error('❌ WebSocket reconnection error:', error);
-                this.socketStatus = 'error';
-                this.socketStatusText = 'Reconnection Failed';
-                this.webSocketState = 'Error';
-            });
-
-            this.socket.on('reconnect_failed', () => {
-                console.error('❌ WebSocket reconnection failed permanently');
-                this.socketStatus = 'failed';
-                this.socketStatusText = 'Connection Failed';
-                this.webSocketState = 'Failed';
-            });
-
-            this.socket.on('error', (error) => {
-                console.error('❌ WebSocket error:', error);
-                this.socketStatus = 'error';
-                this.socketStatusText = 'Error';
-                this.webSocketState = 'Error';
-            });
-
-            this.socket.on('job_progress', (data) => {
-                console.log('📊 Job Progress:', data);
-                this.handleJobProgress(data);
-            });
-
-            this.socket.on('job_status_change', (data) => {
-                console.log('🔄 Job Status Change:', data);
-                this.handleJobStatusChange(data);
-            });
-
-            this.socket.on('session_jobs', (data) => {
-                console.log('📋 Session Jobs Received:', data);
-                this.handleSessionJobs(data);
-            });
-
+                this.socketStatusText = 'Setup Error';
+            }
         },
 
         // =========================
@@ -732,6 +768,17 @@ function csvMergerApp() {
             });
         },
 
+        startNewJob() {
+            // Reset all job-related state
+            this.currentJob = null;
+            this.n8nMappingData = null;
+            this.showJobHistory = false;
+            this.totalRecordCount = 0;
+            
+            // Clear files both frontend and backend
+            this.clearFiles();
+        },
+
         clearFiles() {
             // Clear frontend files
             this.uploadedFiles = [];
@@ -756,17 +803,6 @@ function csvMergerApp() {
             });
         },
 
-        startNewJob() {
-            // Reset all job-related state
-            this.currentJob = null;
-            this.n8nMappingData = null;
-            this.showJobHistory = false;
-            this.totalRecordCount = 0;
-            
-            // Clear files both frontend and backend
-            this.clearFiles();
-        },
-
         removeFile(index) {
             // Get the file being removed to subtract its record count
             const fileToRemove = this.uploadedFiles[index];
@@ -775,6 +811,15 @@ function csvMergerApp() {
             }
             
             this.uploadedFiles.splice(index, 1);
+        },
+
+        resetSession() {
+            this.uploadedFiles = [];
+            this.currentJob = null;
+            this.n8nMappingData = null;
+            this.showJobHistory = false;
+            this.totalRecordCount = 0;
+            this.addNotification('Session reset', 'info');
         },
 
         // =========================
@@ -962,6 +1007,10 @@ function csvMergerApp() {
         },
 
         downloadJob(jobId) {
+            if (!jobId) {
+                this.addNotification('No job ID provided for download', 'error');
+                return;
+            }
             window.location.href = `/api/jobs/${jobId}/download`;
         },
 
@@ -1012,14 +1061,6 @@ function csvMergerApp() {
         // UTILITY FUNCTIONS
         // =========================
 
-        resetSession() {
-            this.uploadedFiles = [];
-            this.currentJob = null;
-            this.n8nMappingData = null;
-            this.showJobHistory = false;
-            this.addNotification('Session reset', 'info');
-        },
-
         checkSystemHealth() {
             fetch('/api/health')
                 .then(response => response.json())
@@ -1038,26 +1079,30 @@ function csvMergerApp() {
         },
 
         loadStoredSettings() {
-            const settings = localStorage.getItem('csv_merger_settings');
-            if (settings) {
-                try {
+            try {
+                const settings = localStorage.getItem('csv_merger_settings');
+                if (settings) {
                     const parsed = JSON.parse(settings);
                     this.tableType = parsed.tableType || 'people';
                     this.processingMode = parsed.processingMode || 'download';
                     this.webhookRateLimit = parsed.webhookRateLimit || 10;
-                } catch (error) {
-                    console.warn('Failed to load stored settings');
                 }
+            } catch (error) {
+                console.warn('Failed to load stored settings:', error);
             }
         },
 
         saveSettings() {
-            const settings = {
-                tableType: this.tableType,
-                processingMode: this.processingMode,
-                webhookRateLimit: this.webhookRateLimit
-            };
-            localStorage.setItem('csv_merger_settings', JSON.stringify(settings));
+            try {
+                const settings = {
+                    tableType: this.tableType,
+                    processingMode: this.processingMode,
+                    webhookRateLimit: this.webhookRateLimit
+                };
+                localStorage.setItem('csv_merger_settings', JSON.stringify(settings));
+            } catch (error) {
+                console.warn('Failed to save settings:', error);
+            }
         },
 
         // =========================
@@ -1151,4 +1196,35 @@ function csvMergerApp() {
             this.addNotification(`Files uploaded before record counting was enabled need to be re-uploaded to get accurate counts. Please clear and re-upload your files.`, 'warning');
         }
     };
-} 
+}
+
+// Make the function globally available
+window.csvMergerApp = csvMergerApp;
+
+// Initialize Alpine.js when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM Content Loaded');
+    
+    // Check if Alpine.js is available
+    if (typeof Alpine === 'undefined') {
+        console.error('Alpine.js not loaded');
+        return;
+    }
+    
+    // Start Alpine.js if not already started
+    if (!window.Alpine) {
+        console.log('Starting Alpine.js...');
+        Alpine.start();
+    }
+});
+
+// Alpine.js error handler
+window.addEventListener('alpine:init', () => {
+    console.log('Alpine.js initialized');
+});
+
+// Debug info for production
+console.log('CSV Merger App Script Loaded');
+console.log('csvMergerApp function available:', typeof csvMergerApp === 'function');
+console.log('Socket.IO available:', typeof io !== 'undefined');
+console.log('jQuery available:', typeof $ !== 'undefined'); 
