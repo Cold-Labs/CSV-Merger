@@ -30,6 +30,23 @@
     <!-- Alpine.js -->
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     
+    <!-- Debug script -->
+    <script>
+        console.log('HTML loaded, checking libraries...');
+        window.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM ready');
+            console.log('Alpine available:', typeof Alpine !== 'undefined');
+            console.log('Socket.IO available:', typeof io !== 'undefined');
+            console.log('jQuery available:', typeof $ !== 'undefined');
+            setTimeout(() => {
+                console.log('Alpine after timeout:', typeof Alpine !== 'undefined');
+                if (typeof Alpine !== 'undefined') {
+                    console.log('Alpine version:', Alpine.version || 'unknown');
+                }
+            }, 1000);
+        });
+    </script>
+    
     <!-- Socket.IO -->
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     

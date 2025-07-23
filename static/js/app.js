@@ -1203,19 +1203,27 @@ window.csvMergerApp = csvMergerApp;
 
 // Initialize Alpine.js when DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOM Content Loaded');
+    console.log('DOM Content Loaded - csvMergerApp available:', typeof csvMergerApp === 'function');
     
-    // Check if Alpine.js is available
-    if (typeof Alpine === 'undefined') {
-        console.error('Alpine.js not loaded');
-        return;
+    // Wait for Alpine.js to load if not available yet
+    let attempts = 0;
+    const maxAttempts = 50; // 5 seconds max
+    
+    function checkAlpine() {
+        attempts++;
+        if (typeof Alpine !== 'undefined') {
+            console.log('Alpine.js found, initializing...');
+            // Alpine.js loads and starts automatically with defer
+            return;
+        } else if (attempts < maxAttempts) {
+            console.log(`Waiting for Alpine.js... (${attempts}/${maxAttempts})`);
+            setTimeout(checkAlpine, 100);
+        } else {
+            console.error('Alpine.js failed to load after 5 seconds');
+        }
     }
     
-    // Start Alpine.js if not already started
-    if (!window.Alpine) {
-        console.log('Starting Alpine.js...');
-        Alpine.start();
-    }
+    checkAlpine();
 });
 
 // Alpine.js error handler
