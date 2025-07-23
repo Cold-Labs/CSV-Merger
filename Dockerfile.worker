@@ -21,6 +21,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Make pre-deploy script executable
+RUN chmod +x pre-deploy-worker.py
+
 # Create necessary directories
 RUN mkdir -p temp_uploads exports logs
 

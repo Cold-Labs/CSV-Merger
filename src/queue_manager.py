@@ -33,13 +33,6 @@ class JobManager:
         # Initialize RQ queue (using default serialization)
         self.queue = Queue('csv_processing', connection=redis_connection)
         
-        # Clear any corrupt jobs from the queue on startup
-        try:
-            self.queue.empty()
-            logger.info("Cleared any existing jobs from queue on startup")
-        except Exception as e:
-            logger.warning(f"Could not clear queue on startup: {e}")
-        
         # Configuration
         self.session_prefix = "session:"
         self.job_ttl = 86400  # 24 hours
