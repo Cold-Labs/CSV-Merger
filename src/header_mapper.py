@@ -314,7 +314,7 @@ class N8NHeaderMapper:
                         try:
                             result = json.loads(response_text)
                             logger.info("✅ Successfully received and parsed mapping from n8n")
-                        return result
+                            return result
                         except json.JSONDecodeError:
                             logger.error(f"❌ Failed to decode JSON from n8n response. Response text: {response_text}")
                             raise Exception("n8n returned invalid JSON")

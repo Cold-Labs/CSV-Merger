@@ -101,11 +101,11 @@ class Phase2Standardizer:
                 # Add Source column from merged DataFrame
                 standardized_df[standard_header] = merged_df['Source']
             else:
-            self._update_progress(f"Mapping {standard_header}", stage="standardize")
-            
-            # Find the best available mapping for this standard header
-            mapped_values = self._map_standard_header(merged_df, standard_header, all_mappings)
-            standardized_df[standard_header] = mapped_values
+                self._update_progress(f"Mapping {standard_header}", stage="standardize")
+                
+                # Find the best available mapping for this standard header
+                mapped_values = self._map_standard_header(merged_df, standard_header, all_mappings)
+                standardized_df[standard_header] = mapped_values
             
             if mapped_values.notna().any():
                 self.stats['headers_mapped'] += 1
