@@ -223,15 +223,34 @@ def create_app():
             health_data['session_manager'] = 'active' if session_manager else 'inactive'
             health_data['job_manager'] = 'active' if job_manager else 'inactive'
             
-            # CRITICAL: Add memory monitoring for Railway
+            # CRITICAL: Add memory monitoring for Railway (container-aware)
             try:
                 import psutil
-                memory = psutil.virtual_memory()
+                import resource
+                
+                # Get host memory (what psutil shows)
+                host_memory = psutil.virtual_memory()
+                host_available_mb = round(host_memory.available / (1024 * 1024), 1)
+                
+                # Get process memory usage (more relevant for container)
+                process = psutil.Process()
+                process_memory = process.memory_info()
+                process_mb = round(process_memory.rss / (1024 * 1024), 1)
+                
+                # Try to get container limits (Railway sets these)
+                try:
+                    with open('/sys/fs/cgroup/memory/memory.limit_in_bytes', 'r') as f:
+                        container_limit_bytes = int(f.read().strip())
+                        container_limit_mb = round(container_limit_bytes / (1024 * 1024), 1)
+                except:
+                    container_limit_mb = "unknown (likely 8GB on Railway)"
+                
                 health_data['memory'] = {
-                    'available_mb': round(memory.available / (1024 * 1024), 1),
-                    'used_percent': memory.percent,
-                    'total_mb': round(memory.total / (1024 * 1024), 1),
-                    'status': 'critical' if memory.available < 50*1024*1024 else 'low' if memory.available < 100*1024*1024 else 'ok'
+                    'container_limit_mb': container_limit_mb,
+                    'process_usage_mb': process_mb,
+                    'host_available_mb': host_available_mb,
+                    'note': 'host_available is the physical server, not your container limit',
+                    'status': 'critical' if process_mb > 6000 else 'high' if process_mb > 4000 else 'ok'
                 }
             except Exception as mem_error:
                 health_data['memory'] = {'error': str(mem_error)}
@@ -930,7 +949,7 @@ def create_app():
                     signal.alarm(0)  # Clear timeout
                     logger.error(f"Simplified processing failed: {e}")
                     raise
-            
+                    
             except Exception as sync_error:
                 # SAFETY: Comprehensive error handling for the entire processing flow
                 error_msg = f"REAL ERROR: {str(sync_error)} (Type: {type(sync_error).__name__})"
