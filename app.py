@@ -657,8 +657,61 @@ def create_app():
                         logger.error(f"Failed to create CSV processor: {e}")
                         raise Exception(f"CSV processor creation failed: {e}")
                     
+                    # Get uploaded files for this session
+                    if not app.session_manager:
+                        raise Exception("Session manager not available")
+                    
+                    uploaded_files = app.session_manager.get_session_files(session_id)
+                    logger.info(f"Retrieved {len(uploaded_files)} files from session {session_id}")
+                    
+                    # ENHANCED DEBUG: Show exactly what file data we got from session
+                    logger.info("🔍 === SESSION FILES DEBUG ===")
+                    for i, file_info in enumerate(uploaded_files):
+                        logger.info(f"🔍 File {i+1}: {file_info}")
+                        # Check if each file exists
+                        file_path = file_info.get('path')
+                        if file_path:
+                            exists = os.path.exists(file_path)
+                            logger.info(f"🔍   Path: {file_path}")
+                            logger.info(f"🔍   Exists: {exists}")
+                            if not exists:
+                                # Check alternative paths
+                                logger.info(f"🔍   Checking alternative paths...")
+                                logger.info(f"🔍   TEMP_UPLOAD_DIR: {Config.TEMP_UPLOAD_DIR}")
+                                
+                                # Check if it's a path mismatch issue
+                                if '/app/temp_uploads/' in file_path:
+                                    new_path = file_path.replace('/app/temp_uploads/', '/app/data/temp_uploads/')
+                                    logger.info(f"🔍   Trying corrected path: {new_path}")
+                                    logger.info(f"🔍   Corrected path exists: {os.path.exists(new_path)}")
+                        else:
+                            logger.error(f"🔍   ❌ No path in file_info!")
+                    
+                    if not uploaded_files:
+                        raise Exception("No files found in session")
+                    
                     file_paths = [f['path'] for f in uploaded_files]
-                    logger.info(f"File paths to process: {file_paths}")
+                    logger.info(f"🔍 File paths to process: {file_paths}")
+                    
+                    # ENHANCED DEBUG: Check if we have the path mismatch issue
+                    corrected_paths = []
+                    for path in file_paths:
+                        if '/app/temp_uploads/' in path and not os.path.exists(path):
+                            # Try to correct the path
+                            corrected_path = path.replace('/app/temp_uploads/', '/app/data/temp_uploads/')
+                            if os.path.exists(corrected_path):
+                                logger.info(f"🔍 ✅ PATH CORRECTION: {path} → {corrected_path}")
+                                corrected_paths.append(corrected_path)
+                            else:
+                                logger.error(f"🔍 ❌ Neither original nor corrected path exists: {path}")
+                                corrected_paths.append(path)  # Keep original for error reporting
+                        else:
+                            corrected_paths.append(path)
+                    
+                    # Use corrected paths if we found any corrections
+                    if corrected_paths != file_paths:
+                        logger.info(f"🔍 Using corrected file paths: {corrected_paths}")
+                        file_paths = corrected_paths
                     
                     # Verify files exist
                     for file_path in file_paths:

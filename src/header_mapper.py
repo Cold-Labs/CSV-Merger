@@ -192,17 +192,38 @@ class N8NHeaderMapper:
         """
         files_data = []
         
+        # ENHANCED DEBUG: Show exactly what we're processing
+        logger.info(f"🔍 === HEADER MAPPER DEBUG ===")
+        logger.info(f"🔍 Received {len(file_paths)} file paths to process:")
+        for i, path in enumerate(file_paths):
+            logger.info(f"🔍   {i+1}. {path}")
+        
         for file_path in file_paths:
             try:
-                logger.info(f"Extracting headers from: {file_path}")
+                logger.info(f"🔍 Processing file: {file_path}")
                 
-                # Check if file exists and is readable
+                # ENHANCED DEBUG: Check file existence and permissions
                 if not os.path.exists(file_path):
-                    logger.error(f"File does not exist: {file_path}")
+                    logger.error(f"🔍 ❌ FILE DOES NOT EXIST: {file_path}")
+                    # Check if parent directory exists
+                    parent_dir = os.path.dirname(file_path)
+                    logger.error(f"🔍 Parent directory: {parent_dir}")
+                    logger.error(f"🔍 Parent exists: {os.path.exists(parent_dir)}")
+                    if os.path.exists(parent_dir):
+                        logger.error(f"🔍 Parent contents: {os.listdir(parent_dir)}")
                     continue
                 
                 file_size = os.path.getsize(file_path)
-                logger.info(f"File size: {file_size} bytes")
+                logger.info(f"🔍 ✅ File exists: {file_path} ({file_size} bytes)")
+                
+                # Check if file is readable
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as test_file:
+                        first_line = test_file.readline()
+                        logger.info(f"🔍 ✅ File is readable, first line: {first_line[:100]}...")
+                except Exception as read_error:
+                    logger.error(f"🔍 ❌ File read error: {read_error}")
+                    continue
                 
                 # Read CSV with more rows to better detect empty columns
                 df = pd.read_csv(file_path, nrows=3, low_memory=False)  # MEMORY FIX: Reduced from 100 to 3 rows
