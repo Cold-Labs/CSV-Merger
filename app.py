@@ -56,11 +56,11 @@ def create_app():
     app = Flask(__name__)
     app.config.update(Config.get_flask_config())
     
-    # Initialize SocketIO
+    # Initialize SocketIO with threading instead of eventlet to avoid blocking conflicts
     socketio = SocketIO(
         app,
         cors_allowed_origins="*" if not Config.IS_PRODUCTION else None,
-        async_mode='eventlet',
+        async_mode='threading',  # CHANGE: Use threading instead of eventlet to avoid blocking issues
         logger=not Config.IS_PRODUCTION,
         engineio_logger=not Config.IS_PRODUCTION
     )
@@ -749,44 +749,48 @@ def create_app():
                     except:
                         logger.warning("Could not set memory limit - proceeding without limit")
                     
-                    logger.info("Starting CSV processing with enhanced safety mechanisms...")
+                    logger.info("Starting CSV processing with simplified approach...")
                     
-                    # SAFETY: Create event loop for async processing
-                    try:
-                        loop = asyncio.get_event_loop()
-                    except RuntimeError:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                    
-                    # SAFETY: Create simple progress callback
+                    # SIMPLIFIED: Remove complex async handling that causes eventlet conflicts
+                    # Create simple progress callback that doesn't use socketio in main thread
                     def sync_progress_callback(*args, **kwargs):
-                        """Progress callback for synchronous jobs"""
+                        """Simplified progress callback"""
                         message = kwargs.get('message', 'Processing...')
-                        logger.info(f"Sync progress for {sync_job_id}: {message}")
-                        
-                        try:
-                            user_name = session.get('user_id', 'anonymous')
-                            socketio.emit('job_progress', {
-                                'job_id': sync_job_id,
-                                **kwargs
-                            }, room=f"job_{sync_job_id}")
-                            socketio.emit('job_progress', {
-                                'job_id': sync_job_id,
-                                **kwargs
-                            }, room=f"session_{user_name}")
-                            socketio.sleep(0.1)
-                        except Exception as e:
-                            logger.error(f"Failed to emit progress: {e}")
+                        logger.info(f"Progress: {message}")
+                        # Note: Skip socketio emission to avoid threading conflicts
                     
-                    # SAFETY: Process files with timeout protection
+                    # SIMPLIFIED: Process files synchronously to avoid async/threading conflicts
                     try:
-                        df, export_path, n8n_response = loop.run_until_complete(
-                            processor.process_files(
-                                file_paths,
-                                table_type,
-                                session_id
+                        # Import and create processor
+                        from src.csv_processor import CSVProcessor
+                        processor = CSVProcessor(app.config_manager, sync_progress_callback, session_manager=app.session_manager)
+                        logger.info("CSV processor created successfully")
+                        
+                        # MEMORY OPTIMIZATION: Process with minimal memory footprint
+                        logger.info("Starting simplified synchronous processing...")
+                        
+                        # Call the async method but handle it synchronously in a safer way
+                        import asyncio
+                        
+                        # Create new event loop in thread-safe way
+                        try:
+                            # Don't use existing loop to avoid eventlet conflicts
+                            new_loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(new_loop)
+                            
+                            # Process files
+                            result = new_loop.run_until_complete(
+                                processor.process_files(file_paths, table_type, session_id)
                             )
-                        )
+                            
+                            df, export_path, n8n_response = result
+                            
+                            # Clean up loop
+                            new_loop.close()
+                            
+                        except Exception as process_error:
+                            logger.error(f"Processing failed: {process_error}")
+                            raise Exception(f"CSV processing failed: {process_error}")
                         
                         # Clear timeout
                         signal.alarm(0)
@@ -798,79 +802,77 @@ def create_app():
                         if not export_path or not os.path.exists(export_path):
                             raise Exception("Processing completed but no export file was created")
                         
-                        # Store job results if job manager is available
+                        # SIMPLIFIED: Basic job storage without complex metadata
                         if app.job_manager:
                             user_name = session.get('user_id', 'anonymous')
-                            logger.info(f"Storing job {sync_job_id} under user: {user_name}")
+                            logger.info(f"Storing simple job result for user: {user_name}")
                             
+                            # Simple job metadata
                             job_metadata = {
                                 'session_id': user_name,
-                                'user_id': user_name,
-                                'table_type': table_type,
-                                'processing_mode': processing_mode,
-                                'webhook_url': webhook_url,
-                                'webhook_rate_limit': webhook_rate_limit,
-                                'webhook_limit': webhook_limit,
-                                'files': uploaded_files,
-                                'created_at': datetime.now(timezone.utc).isoformat(),
-                                'completed_at': datetime.now(timezone.utc).isoformat(),
                                 'status': 'completed',
-                                'progress': 100,
                                 'result_path': export_path,
+                                'completed_at': datetime.now(timezone.utc).isoformat(),
                                 'message': 'Processing completed successfully'
                             }
                             
-                            app.job_manager._store_job_metadata(sync_job_id, user_name, job_metadata)
-                            app.job_manager._add_job_to_session(user_name, sync_job_id)
-                            
-                            job_results = {
-                                'download_info': {
-                                    'file_path': export_path,
-                                    'filename': os.path.basename(export_path),
-                                    'stats': {
-                                        'total_records': len(df) if hasattr(df, '__len__') else 0,
-                                        'processing_time_seconds': 0
-                                    }
-                                }
-                            }
-                            
-                            job_results_key = f"job_results:{user_name}:{sync_job_id}"
-                            app.job_manager.redis.setex(job_results_key, app.job_manager.session_ttl, json.dumps(job_results))
-                            
-                            logger.info(f"Stored job {sync_job_id} successfully")
+                            try:
+                                app.job_manager._store_job_metadata(sync_job_id, user_name, job_metadata)
+                                app.job_manager._add_job_to_session(user_name, sync_job_id)
+                                logger.info(f"Job {sync_job_id} stored successfully")
+                            except Exception as storage_error:
+                                logger.warning(f"Job storage failed but processing succeeded: {storage_error}")
                         
-                        # Return success response
+                        # Force memory cleanup
+                        try:
+                            del df, processor
+                            import gc
+                            gc.collect()
+                        except:
+                            pass
+                        
+                        # Return simplified success response
                         return jsonify({
                             'success': True,
                             'job_id': sync_job_id,
-                            'message': 'Job processed successfully with enhanced safety',
+                            'message': 'Job processed successfully (simplified mode)',
                             'status': {
                                 'job_id': sync_job_id,
                                 'status': 'completed',
                                 'progress': 100,
                                 'message': 'Processing completed successfully',
-                                'result_path': export_path,
-                                'records_processed': len(df) if hasattr(df, '__len__') else 0
+                                'result_path': export_path
                             },
-                            'mode': 'synchronous_safe'
+                            'mode': 'simplified_safe'
                         }), 201
-                        
+                    
                     except TimeoutError as e:
                         signal.alarm(0)  # Clear timeout
                         raise Exception(f"Processing timeout: {e}")
                     except Exception as e:
                         signal.alarm(0)  # Clear timeout
-                        logger.error(f"Processing failed: {e}")
+                        logger.error(f"Simplified processing failed: {e}")
                         raise
-                    
+                
                 except Exception as sync_error:
-                    logger.error(f"REAL ERROR: {sync_error}")
-                    logger.error(f"REAL ERROR TYPE: {type(sync_error).__name__}")
-                    import traceback
-                    logger.error(f"REAL TRACEBACK: {traceback.format_exc()}")
-                    return jsonify({
-                        'error': f'REAL ERROR: {str(sync_error)} (Type: {type(sync_error).__name__})'
-                    }), 500
+                    # SAFETY: Comprehensive error handling for the entire processing flow
+                    error_msg = f"REAL ERROR: {str(sync_error)} (Type: {type(sync_error).__name__})"
+                    logger.error(f"Job processing failed: {error_msg}")
+                    
+                    # Clear any timeouts
+                    try:
+                        signal.alarm(0)
+                    except:
+                        pass
+                    
+                    # Force garbage collection on error
+                    try:
+                        import gc
+                        gc.collect()
+                    except:
+                        pass
+                    
+                    return jsonify({'error': error_msg}), 500
         
         except Exception as e:
             logger.error(f"Job submission error: {e}")
