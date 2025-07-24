@@ -620,47 +620,51 @@ def create_app():
                 logger.warning(f"RQ error ({str(e)}), processing synchronously: {sync_job_id}")
                 
                 try:
-                    # Process synchronously with better error handling
-                    logger.info(f"Starting synchronous processing for {len(uploaded_files)} files")
-                    logger.info(f"Uploaded files: {uploaded_files}")
+                    # SAFETY: Set processing timeout to prevent infinite hangs
+                    import signal
                     
-                    logger.info("Creating CSV processor...")
+                    def timeout_handler(signum, frame):
+                        raise TimeoutError("Processing timeout - operation took too long")
+                    
+                    # Set 5 minute timeout for processing
+                    signal.signal(signal.SIGALRM, timeout_handler)
+                    signal.alarm(300)  # 5 minutes
+                    
+                    logger.info("=== STARTING CSV PROCESSING JOB ===")
+                    logger.info(f"Session ID: {session_id}")
+                    logger.info(f"Table type: {table_type}")
+                    logger.info(f"Processing mode: {processing_mode}")
+                    
+                    # SAFETY: Memory monitoring before processing
                     try:
-                        # Create a simple progress callback for synchronous processing
-                        def sync_progress_callback(*args, **kwargs):
-                            """Progress callback for synchronous jobs"""
-                            message = kwargs.get('message', 'Processing...')
-                            logger.info(f"Sync progress for {sync_job_id}: {message} | args: {args} | kwargs: {kwargs}")
-                            
-                            # SIMPLE: Use user's name for progress updates
-                            user_name = session.get('user_id', 'anonymous')
-                            
-                            # Emit to both job room and user room
-                            socketio.emit('job_progress', {
-                                'job_id': sync_job_id,
-                                **kwargs
-                            }, room=f"job_{sync_job_id}")
-                            
-                            # Also emit to user room
-                            socketio.emit('job_progress', {
-                                'job_id': sync_job_id,
-                                **kwargs
-                            }, room=f"session_{user_name}")
-                            
-                            socketio.sleep(0.1)
+                        import psutil
+                        process = psutil.Process()
+                        memory_before = process.memory_info().rss / 1024 / 1024  # MB
+                        logger.info(f"Memory usage before processing: {memory_before:.1f}MB")
                         
-                        # Use the updated CSV processor with three-phase processing
-                        from src.csv_processor import CSVProcessor
-                        processor = CSVProcessor(app.config_manager, sync_progress_callback, session_manager=app.session_manager)
-                        logger.info("CSV processor created successfully")
+                        # SAFETY: Check available memory 
+                        available_memory = psutil.virtual_memory().available / 1024 / 1024  # MB
+                        if available_memory < 100:  # Less than 100MB available
+                            raise Exception(f"Insufficient memory available: {available_memory:.1f}MB")
+                        logger.info(f"Available system memory: {available_memory:.1f}MB")
+                        
+                    except ImportError:
+                        logger.info("psutil not available - skipping memory monitoring")
                     except Exception as e:
-                        logger.error(f"Failed to create CSV processor: {e}")
-                        raise Exception(f"CSV processor creation failed: {e}")
+                        logger.error(f"Memory check failed: {e}")
+                        # Don't fail completely, just log and continue
                     
-                    # Get uploaded files for this session
+                    # Get session and validate
                     if not app.session_manager:
                         raise Exception("Session manager not available")
                     
+                    session_info = app.session_manager.get_session(session_id)
+                    if not session_info:
+                        raise Exception(f"Session {session_id} not found or expired")
+                    
+                    logger.info(f"Session validated: {session_info.session_id}")
+                    
+                    # Get uploaded files for this session
                     uploaded_files = app.session_manager.get_session_files(session_id)
                     logger.info(f"Retrieved {len(uploaded_files)} files from session {session_id}")
                     
@@ -713,223 +717,151 @@ def create_app():
                         logger.info(f"🔍 Using corrected file paths: {corrected_paths}")
                         file_paths = corrected_paths
                     
-                    # Verify files exist
+                    # SAFETY: Verify all files exist before starting processing
+                    missing_files = []
                     for file_path in file_paths:
                         if not os.path.exists(file_path):
+                            missing_files.append(file_path)
                             logger.error(f"File not found: {file_path}")
-                            raise FileNotFoundError(f"File not found: {file_path}")
-                        logger.info(f"File exists: {file_path} ({os.path.getsize(file_path)} bytes)")
+                        else:
+                            file_size = os.path.getsize(file_path)
+                            logger.info(f"File exists: {file_path} ({file_size} bytes)")
                     
-                    # Add timeout and memory monitoring for large datasets
-                    import signal
-                    import resource
+                    if missing_files:
+                        error_msg = f"Missing files: {missing_files}"
+                        logger.error(error_msg)
+                        raise FileNotFoundError(error_msg)
                     
-                    # MEMORY FIX: Set memory limit to 512MB to fit Railway constraints 
+                    # SAFETY: Create CSV processor with error handling
                     try:
+                        from src.csv_processor import CSVProcessor
+                        processor = CSVProcessor(app.config_manager, sync_progress_callback, session_manager=app.session_manager)
+                        logger.info("CSV processor created successfully")
+                    except Exception as e:
+                        logger.error(f"Failed to create CSV processor: {e}")
+                        raise Exception(f"CSV processor creation failed: {e}")
+                    
+                    # SAFETY: Set memory limit to 512MB to fit Railway constraints 
+                    try:
+                        import resource
                         resource.setrlimit(resource.RLIMIT_AS, (512*1024*1024, 512*1024*1024))  # 512MB instead of 1GB
                         logger.info("Memory limit set to 512MB")
                     except:
                         logger.warning("Could not set memory limit - proceeding without limit")
                     
-                    # MEMORY FIX: Add memory monitoring
-                    try:
-                        import psutil
-                        process = psutil.Process()
-                        memory_before = process.memory_info().rss / 1024 / 1024  # MB
-                        logger.info(f"Memory usage before processing: {memory_before:.1f}MB")
-                    except:
-                        logger.info("psutil not available - skipping memory monitoring")
+                    logger.info("Starting CSV processing with enhanced safety mechanisms...")
                     
-                    logger.info("Calling process_files with n8n header mapping...")
+                    # SAFETY: Create event loop for async processing
                     try:
-                        # Use the actual CSVProcessor with n8n mapping
-                        logger.info("🔍 Using CSVProcessor with n8n header mapping...")
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    
+                    # SAFETY: Create simple progress callback
+                    def sync_progress_callback(*args, **kwargs):
+                        """Progress callback for synchronous jobs"""
+                        message = kwargs.get('message', 'Processing...')
+                        logger.info(f"Sync progress for {sync_job_id}: {message}")
                         
-                        # Get file paths from session
-                        file_paths = [file_info['path'] for file_info in uploaded_files]
-                        logger.info(f"File paths: {file_paths}")
-                        
-                        # Check if files exist
-                        for file_path in file_paths:
-                            if not os.path.exists(file_path):
-                                logger.error(f"File does not exist: {file_path}")
-                                raise FileNotFoundError(f"File not found: {file_path}")
-                            logger.info(f"File exists: {file_path}")
-                        
-                        # Create event loop for async processing
                         try:
-                            loop = asyncio.get_event_loop()
-                        except RuntimeError:
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                        
-                        # Process files asynchronously (for n8n mapping)
-                        result_df, export_path, n8n_response = loop.run_until_complete(
-                            processor.process_files(file_paths, table_type, upload_session_id)
+                            user_name = session.get('user_id', 'anonymous')
+                            socketio.emit('job_progress', {
+                                'job_id': sync_job_id,
+                                **kwargs
+                            }, room=f"job_{sync_job_id}")
+                            socketio.emit('job_progress', {
+                                'job_id': sync_job_id,
+                                **kwargs
+                            }, room=f"session_{user_name}")
+                            socketio.sleep(0.1)
+                        except Exception as e:
+                            logger.error(f"Failed to emit progress: {e}")
+                    
+                    # SAFETY: Process files with timeout protection
+                    try:
+                        df, export_path, n8n_response = loop.run_until_complete(
+                            processor.process_files(
+                                file_paths,
+                                table_type,
+                                session_id
+                            )
                         )
-                        logger.info(f"Processing completed. Result shape: {result_df.shape}, Export path: {export_path}")
                         
-                        logger.info("n8n-based CSV processing completed successfully")
+                        # Clear timeout
+                        signal.alarm(0)
                         
-                    except Exception as e:
-                        logger.error(f"n8n-based CSV processing failed: {e}")
-                        logger.error(f"Exception type: {type(e).__name__}")
-                        import traceback
-                        logger.error(f"Full traceback: {traceback.format_exc()}")
-                        raise
-                    
-                    # Use the export path from process_files
-                    result_path = export_path
-                    
-                    # Handle webhook processing if needed
-                    logger.info(f"DEBUG: processing_mode = '{processing_mode}', webhook_url = '{webhook_url}', webhook_limit = {webhook_limit}")
-                    # Extra debug before webhook block
-                    logger.info(f"WEBHOOK DEBUG: About to process webhooks. processing_mode={processing_mode}, webhook_url={webhook_url}, webhook_limit={webhook_limit}")
-                    logger.info(f"WEBHOOK DEBUG: result_df shape={result_df.shape}, records preview={result_df.to_dict('records')[:1]}")
-                    if processing_mode == 'webhook' and webhook_url:
-                        logger.info(f"Starting webhook delivery for {len(result_df)} records (limit: {webhook_limit})")
-                        try:
-                            from src.webhook_sender import WebhookSender, WebhookConfig
-                            # Apply webhook limit if specified
-                            records = result_df.to_dict('records')
-                            if webhook_limit > 0 and len(records) > webhook_limit:
-                                records = records[:webhook_limit]
-                                logger.info(f"Webhook limit applied: sending {webhook_limit} records out of {len(result_df)} total")
-                            # Initialize webhook sender
-                            webhook_config = WebhookConfig(webhook_url, webhook_rate_limit)
-                            webhook_sender = WebhookSender(webhook_config, sync_progress_callback)
-                            # Send records
-                            webhook_results = webhook_sender.send_records_sync(records)
-                            logger.info(f"WEBHOOK DEBUG: webhook_results={webhook_results}")
-                            logger.info(f"Webhook delivery completed: {webhook_results.get('success_rate', 0):.1f}% success rate")
+                        logger.info(f"✅ Processing completed successfully!")
+                        logger.info(f"Export path: {export_path}")
+                        
+                        # SAFETY: Verify export file was created
+                        if not export_path or not os.path.exists(export_path):
+                            raise Exception("Processing completed but no export file was created")
+                        
+                        # Store job results if job manager is available
+                        if app.job_manager:
+                            user_name = session.get('user_id', 'anonymous')
+                            logger.info(f"Storing job {sync_job_id} under user: {user_name}")
                             
-                            # Update job results with webhook info
+                            job_metadata = {
+                                'session_id': user_name,
+                                'user_id': user_name,
+                                'table_type': table_type,
+                                'processing_mode': processing_mode,
+                                'webhook_url': webhook_url,
+                                'webhook_rate_limit': webhook_rate_limit,
+                                'webhook_limit': webhook_limit,
+                                'files': uploaded_files,
+                                'created_at': datetime.now(timezone.utc).isoformat(),
+                                'completed_at': datetime.now(timezone.utc).isoformat(),
+                                'status': 'completed',
+                                'progress': 100,
+                                'result_path': export_path,
+                                'message': 'Processing completed successfully'
+                            }
+                            
+                            app.job_manager._store_job_metadata(sync_job_id, user_name, job_metadata)
+                            app.job_manager._add_job_to_session(user_name, sync_job_id)
+                            
                             job_results = {
-                                'webhook_status': 'completed',
-                                'webhook_results': webhook_results,
-                                'webhook_success_rate': webhook_results.get('success_rate', 0),
-                                'webhook_failed_records': webhook_results.get('failed_records', 0),
-                                'webhook_limit_applied': webhook_limit if webhook_limit > 0 else None,
-                                'webhook_records_sent': len(records),
-                                'webhook_total_available': len(result_df),
                                 'download_info': {
-                                    'file_path': result_path,
-                                    'filename': os.path.basename(result_path),
+                                    'file_path': export_path,
+                                    'filename': os.path.basename(export_path),
                                     'stats': {
-                                        'total_records': len(result_df) if hasattr(result_df, '__len__') else 0,
-                                        'duplicates_removed': 0,
+                                        'total_records': len(df) if hasattr(df, '__len__') else 0,
                                         'processing_time_seconds': 0
                                     }
-                                },
-                                'processing_stats': {
-                                    'total_records': len(result_df) if hasattr(result_df, '__len__') else 0,
-                                    'duplicates_removed': 0,
-                                    'files_processed': len(uploaded_files)
                                 }
                             }
                             
-                        except Exception as webhook_error:
-                            logger.error(f"Webhook delivery failed: {webhook_error}")
-                            # Continue with download info only
-                            job_results = {
-                                'webhook_status': 'failed',
-                                'webhook_error': str(webhook_error),
-                                'download_info': {
-                                    'file_path': result_path,
-                                    'filename': os.path.basename(result_path),
-                                    'stats': {
-                                        'total_records': len(result_df) if hasattr(result_df, '__len__') else 0,
-                                        'duplicates_removed': 0,
-                                        'processing_time_seconds': 0
-                                    }
-                                },
-                                'processing_stats': {
-                                    'total_records': len(result_df) if hasattr(result_df, '__len__') else 0,
-                                    'duplicates_removed': 0,
-                                    'files_processed': len(uploaded_files)
-                                }
-                            }
-                    else:
-                        # Download mode - use original job results structure
-                        logger.info(f"DEBUG: Using download mode job results structure")
-                        job_results = {
-                            'download_info': {
-                                'file_path': result_path,
-                                'filename': os.path.basename(result_path),
-                                'stats': {
-                                    'total_records': len(result_df) if hasattr(result_df, '__len__') else 0,
-                                    'duplicates_removed': 0,
-                                    'processing_time_seconds': 0
-                                }
-                            },
-                            'processing_stats': {
-                                'total_records': len(result_df) if hasattr(result_df, '__len__') else 0,
-                                'duplicates_removed': 0,
-                                'files_processed': len(uploaded_files)
-                            }
-                        }
-                    
-                    logger.info(f"About to store job {sync_job_id} in job manager...")
-                    
-                    # Store job information in job manager for download access
-                    logger.info(f"Job manager available: {app.job_manager is not None}")
-                    if app.job_manager:
-                        # SIMPLE: Use user_id (user's name) as the ONLY session identifier
-                        user_name = session.get('user_id', 'anonymous')
+                            job_results_key = f"job_results:{user_name}:{sync_job_id}"
+                            app.job_manager.redis.setex(job_results_key, app.job_manager.session_ttl, json.dumps(job_results))
+                            
+                            logger.info(f"Stored job {sync_job_id} successfully")
                         
-                        logger.info(f"Storing job {sync_job_id} under user: {user_name}")
-                        
-                        # Create job metadata
-                        job_metadata = {
-                            'session_id': user_name,  # Use user name as session
-                            'user_id': user_name,  # Same as session
-                            'table_type': table_type,
-                            'processing_mode': processing_mode,
-                            'webhook_url': webhook_url,
-                            'webhook_rate_limit': webhook_rate_limit,
-                            'webhook_limit': webhook_limit,
-                            'files': uploaded_files,
-                            'created_by': request.remote_addr,
-                            'user_agent': request.headers.get('User-Agent'),
-                            'created_at': datetime.now(timezone.utc).isoformat(),
-                            'completed_at': datetime.now(timezone.utc).isoformat(),
-                            'status': 'completed',
-                            'progress': 100,
-                            'result_path': export_path,
-                            'stats': processor.get_processing_stats(),
-                            'message': 'Processing completed successfully'
-                        }
-                        
-                        # Store job metadata using user name as session
-                        app.job_manager._store_job_metadata(sync_job_id, user_name, job_metadata)
-                        app.job_manager._add_job_to_session(user_name, sync_job_id)
-                        
-                        # job_results is now defined above based on processing mode
-                        
-                        # Store job results using user name
-                        job_results_key = f"job_results:{user_name}:{sync_job_id}"
-                        app.job_manager.redis.setex(job_results_key, app.job_manager.session_ttl, json.dumps(job_results))
-                        
-                        logger.info(f"Stored synchronous job {sync_job_id} in job manager for download access")
-                    else:
-                        logger.warning(f"Job manager not available, cannot store job {sync_job_id} for download access")
-                    
-                    return jsonify({
-                        'success': True,
-                        'job_id': sync_job_id,
-                        'message': 'Job processed synchronously (RQ workaround)',
-                        'status': {
+                        # Return success response
+                        return jsonify({
+                            'success': True,
                             'job_id': sync_job_id,
-                            'status': 'completed',
-                            'progress': 100,
-                            'message': 'Processing completed synchronously',
-                            'result_path': export_path,
-                            'records_processed': len(result_df) if hasattr(result_df, '__len__') else 0,
-                            'stats': processor.get_processing_stats(),
-                            'n8n_response': n8n_response
-                        },
-                        'mode': 'synchronous'
-                    }), 201
+                            'message': 'Job processed successfully with enhanced safety',
+                            'status': {
+                                'job_id': sync_job_id,
+                                'status': 'completed',
+                                'progress': 100,
+                                'message': 'Processing completed successfully',
+                                'result_path': export_path,
+                                'records_processed': len(df) if hasattr(df, '__len__') else 0
+                            },
+                            'mode': 'synchronous_safe'
+                        }), 201
+                        
+                    except TimeoutError as e:
+                        signal.alarm(0)  # Clear timeout
+                        raise Exception(f"Processing timeout: {e}")
+                    except Exception as e:
+                        signal.alarm(0)  # Clear timeout
+                        logger.error(f"Processing failed: {e}")
+                        raise
                     
                 except Exception as sync_error:
                     logger.error(f"REAL ERROR: {sync_error}")
