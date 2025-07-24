@@ -75,10 +75,10 @@ fi
 
 echo "✅ All checks passed, starting Gunicorn..."
 
-# Start Gunicorn with eventlet worker
+# Start Gunicorn with sync worker (compatible with threading mode SocketIO)
 echo "Starting Gunicorn on 0.0.0.0:${PORT:-5001}..."
 exec gunicorn \
-    --worker-class eventlet \
+    --worker-class sync \
     --workers 1 \
     --bind 0.0.0.0:${PORT:-5001} \
     --timeout 120 \
