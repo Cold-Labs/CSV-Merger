@@ -34,11 +34,11 @@ class Config:
     
     # Directory Configuration
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    TEMP_UPLOAD_DIR = os.getenv('TEMP_UPLOAD_DIR', os.path.join(BASE_DIR, 'temp_uploads'))
-    EXPORT_DIR = os.getenv('EXPORT_DIR', os.path.join(BASE_DIR, 'exports'))
+    TEMP_UPLOAD_DIR = os.getenv('TEMP_UPLOAD_DIR', os.path.join(BASE_DIR, 'data', 'temp_uploads'))
+    EXPORT_DIR = os.getenv('EXPORT_DIR', os.path.join(BASE_DIR, 'data', 'exports'))
     CONFIG_DIR = os.getenv('CONFIG_DIR', os.path.join(BASE_DIR, 'config'))
     FIELD_MAPPINGS_FILE = os.path.join(CONFIG_DIR, 'field_mappings.json')
-    LOG_DIR = os.getenv('LOG_DIR', os.path.join(BASE_DIR, 'logs'))
+    LOG_DIR = os.getenv('LOG_DIR', os.path.join(BASE_DIR, 'data', 'logs'))
     
     # Webhook Configuration
     WEBHOOK_TIMEOUT = int(os.getenv('WEBHOOK_TIMEOUT', '30'))
