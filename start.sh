@@ -75,6 +75,35 @@ fi
 
 echo "✅ All checks passed, starting Gunicorn..."
 
+# Test Redis connection
+echo "🔗 Testing Redis connection..."
+python -c "
+import redis
+from config.settings import Config
+try:
+    if Config.REDIS_URL:
+        r = redis.from_url(Config.REDIS_URL, decode_responses=True)
+    else:
+        r = redis.Redis(**Config.get_redis_config())
+    r.ping()
+    print('✅ Redis connection successful')
+except Exception as e:
+    print(f'❌ Redis connection failed: {e}')
+    exit(1)
+"
+
+# Clean up any stale worker registrations
+echo "🧹 Cleaning up stale workers..."
+python pre-deploy-worker.py
+if [ $? -eq 0 ]; then
+    echo "✅ Worker cleanup completed"
+else
+    echo "⚠️ Worker cleanup had issues, continuing anyway..."
+fi
+
+# Run database migrations if any
+echo "📊 Running initialization..."
+
 # Start Gunicorn with sync worker (compatible with threading mode SocketIO)
 echo "Starting Gunicorn on 0.0.0.0:${PORT:-5001}..."
 exec gunicorn \

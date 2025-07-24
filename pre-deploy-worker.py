@@ -67,6 +67,29 @@ def main():
         except Exception as e:
             logger.warning(f"Failed to clear job keys: {e}")
         
+        # Clear worker registrations to prevent naming conflicts
+        try:
+            # Clear worker registry
+            worker_keys = redis_client.keys("rq:worker:*")
+            if worker_keys:
+                redis_client.delete(*worker_keys)
+                logger.info(f"✅ Cleared {len(worker_keys)} worker registrations")
+                cleared_count += len(worker_keys)
+            
+            # Clear worker set
+            redis_client.delete("rq:workers")
+            logger.info("✅ Cleared worker set")
+            
+            # Clear any worker-related queues
+            worker_queue_keys = redis_client.keys("rq:worker:*:*")
+            if worker_queue_keys:
+                redis_client.delete(*worker_queue_keys)
+                logger.info(f"✅ Cleared {len(worker_queue_keys)} worker queue keys")
+                cleared_count += len(worker_queue_keys)
+                
+        except Exception as e:
+            logger.warning(f"Failed to clear worker registrations: {e}")
+        
         logger.info(f"✅ Pre-deploy cleanup complete! Cleared {cleared_count} Redis keys")
         return 0
         

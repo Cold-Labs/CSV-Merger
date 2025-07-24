@@ -27,6 +27,81 @@ from src.session_manager import SessionManager
 from src.logging_config import setup_module_logger
 logger = setup_module_logger(__name__, 'worker.log')
 
+def cleanup_stale_workers(redis_connection: redis.Redis):
+    """Clean up stale worker registrations from previous runs"""
+    try:
+        from rq import Worker
+        from rq.registry import clean_registries
+        from rq.queue import Queue
+        
+        # Create RQ-compatible connection (without decode_responses for RQ operations)
+        rq_connection = redis.from_url(
+            Config.REDIS_URL if hasattr(Config, 'REDIS_URL') and Config.REDIS_URL else 'redis://localhost:6379/0',
+            decode_responses=False,  # RQ needs bytes, not decoded strings
+            encoding='utf-8',
+            encoding_errors='replace'
+        )
+        
+        # Get all registered workers using RQ-compatible connection
+        workers = Worker.all(connection=rq_connection)
+        
+        # Remove workers that are no longer alive
+        removed_count = 0
+        for worker in workers:
+            try:
+                # Check if worker is still active (different method for different RQ versions)
+                is_alive = False
+                try:
+                    # Try newer RQ method
+                    is_alive = worker.is_alive()
+                except AttributeError:
+                    # Fall back to checking worker state
+                    try:
+                        worker_state = worker.get_state()
+                        is_alive = worker_state in ['busy', 'idle']
+                    except:
+                        # If we can't determine state, consider it dead
+                        is_alive = False
+                
+                if not is_alive:
+                    logger.info(f"Removing stale worker: {worker.name}")
+                    try:
+                        worker.register_death()
+                    except:
+                        # If register_death fails, force remove
+                        pass
+                    removed_count += 1
+            except Exception as e:
+                logger.warning(f"Error checking worker {worker.name}: {e}")
+                # Force remove the worker key using the decoded connection
+                try:
+                    redis_connection.delete(f"rq:worker:{worker.name}")
+                    redis_connection.srem("rq:workers", worker.name)
+                    removed_count += 1
+                    logger.info(f"Force removed stale worker key: {worker.name}")
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to force remove worker {worker.name}: {cleanup_error}")
+        
+        # Clean up job registries with RQ connection (skip if problematic)
+        try:
+            # Try to clean registries, but don't fail if it doesn't work
+            queue = Queue('csv_processing', connection=rq_connection)
+            queue.cleanup()
+            logger.info("Cleaned up job registries")
+        except Exception as e:
+            logger.warning(f"Registry cleanup skipped due to error: {e}")
+        
+        if removed_count > 0:
+            logger.info(f"Cleaned up {removed_count} stale worker(s)")
+        else:
+            logger.info("No stale workers found")
+            
+        return removed_count
+        
+    except Exception as e:
+        logger.error(f"Error during worker cleanup: {e}")
+        return 0
+
 # FastAPI health check server
 def create_health_app() -> FastAPI:
     """Create FastAPI app for health checks"""
@@ -57,7 +132,14 @@ class CSVWorker:
         """
         self.redis = redis_connection
         self.config = Config() if isinstance(Config, type) else Config
-        self.worker_name = worker_name or f"csv-worker-{os.getpid()}"
+        
+        # Generate unique worker name to avoid conflicts
+        if worker_name:
+            # Ensure uniqueness by adding timestamp
+            import time
+            self.worker_name = f"{worker_name}-{int(time.time())}-{os.getpid()}"
+        else:
+            self.worker_name = f"csv-processor-{os.getpid()}-{int(time.time())}"
         
         # Initialize components
         self.config_manager = ConfigManager(self.config.FIELD_MAPPINGS_FILE)
@@ -65,13 +147,42 @@ class CSVWorker:
         self.session_manager = SessionManager(redis_connection, self.config)
         
         # Create RQ worker with explicit queue
-        from rq import Queue
-        self.queue = Queue('csv_processing', connection=redis_connection)
-        self.worker = Worker(
-            [self.queue], 
-            connection=redis_connection,
-            name=self.worker_name
+        from rq import Queue, Worker
+        
+        # For RQ workers, create a separate Redis connection without decode_responses
+        # to avoid conflicts with RQ's internal string/bytes handling
+        rq_redis_connection = redis.from_url(
+            Config.REDIS_URL if hasattr(Config, 'REDIS_URL') and Config.REDIS_URL else 'redis://localhost:6379/0',
+            decode_responses=False,  # RQ needs bytes, not decoded strings
+            encoding='utf-8',
+            encoding_errors='replace'
         )
+        
+        self.queue = Queue('csv_processing', connection=rq_redis_connection)
+        
+        # Check if worker name already exists
+        max_attempts = 5
+        attempt = 0
+        
+        while attempt < max_attempts:
+            try:
+                # Try to create worker with unique name
+                self.worker = Worker(
+                    [self.queue], 
+                    connection=rq_redis_connection,  # Use the RQ-specific connection
+                    name=self.worker_name
+                )
+                break
+            except Exception as e:
+                if "already" in str(e).lower() and attempt < max_attempts - 1:
+                    # Worker name conflict, try a different name
+                    attempt += 1
+                    self.worker_name = f"csv-processor-{os.getpid()}-{int(time.time())}-{attempt}"
+                    logger.warning(f"Worker name conflict, trying: {self.worker_name}")
+                    continue
+                else:
+                    logger.error(f"Failed to create worker after {max_attempts} attempts: {e}")
+                    raise
         
         # Shutdown flag
         self.shutdown_requested = False
@@ -349,31 +460,38 @@ class WorkerManager:
         logger.info(f"Starting {self.num_workers} CSV processing workers")
         
         try:
-            # Create Redis connection
-            redis_connection = redis.from_url(
+            # Create Redis connection for application use (with decode_responses=True)
+            app_redis_connection = redis.from_url(
                 self.redis_url, 
                 decode_responses=True,
                 encoding='utf-8',
                 encoding_errors='replace'
             )
-            redis_connection.ping()
+            app_redis_connection.ping()
             
+            # Clean up stale workers (uses both connection types internally)
+            cleanup_stale_workers(app_redis_connection)
+
             # Create and start workers
             for i in range(self.num_workers):
-                worker_name = f"csv-worker-{i+1}"
-                worker = CSVWorker(redis_connection, worker_name)
+                # Use unique worker base name
+                worker_base_name = f"csv-manager-worker-{i+1}"
+                # Pass the app connection (worker will create its own RQ connection)
+                worker = CSVWorker(app_redis_connection, worker_base_name)
                 
                 # Start worker in separate thread for multi-worker support
                 if self.num_workers > 1:
                     worker_thread = threading.Thread(
                         target=worker.start,
-                        name=worker_name,
+                        name=worker.worker_name,  # Use the actual worker name
                         daemon=False
                     )
                     worker_thread.start()
                     self.workers.append((worker, worker_thread))
+                    logger.info(f"Started worker thread: {worker.worker_name}")
                 else:
                     # Single worker - run directly
+                    logger.info(f"Starting single worker: {worker.worker_name}")
                     worker.start()
                     self.workers.append((worker, None))
             

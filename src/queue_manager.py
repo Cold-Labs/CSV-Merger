@@ -22,16 +22,25 @@ class JobManager:
         Initialize job manager with Redis queue
         
         Args:
-            redis_connection: Redis connection instance
+            redis_connection: Redis connection instance (with decode_responses=True for app use)
             config: Application configuration
             socketio: Optional SocketIO instance for real-time updates
         """
-        self.redis = redis_connection
+        self.redis = redis_connection  # Keep for application operations
         self.config = config
         self.socketio = socketio  # Add SocketIO for real-time updates
         
-        # Initialize RQ queue (using default serialization)
-        self.queue = Queue('csv_processing', connection=redis_connection)
+        # Create RQ-specific Redis connection (without decode_responses for RQ)
+        redis_url = getattr(config, 'REDIS_URL', 'redis://localhost:6379/0')
+        self.rq_redis = redis.from_url(
+            redis_url,
+            decode_responses=False,  # RQ needs bytes, not decoded strings
+            encoding='utf-8',
+            encoding_errors='replace'
+        )
+        
+        # Initialize RQ queue with RQ-specific connection
+        self.queue = Queue('csv_processing', connection=self.rq_redis)
         
         # Configuration
         self.session_prefix = "session:"
@@ -290,7 +299,7 @@ class JobManager:
         """Get status for RQ jobs"""
         try:
             # Get RQ job
-            rq_job = Job.fetch(job_id, connection=self.redis)
+            rq_job = Job.fetch(job_id, connection=self.rq_redis)
             
             # Get job metadata from Redis
             job_key = f"job:{session_id}:{job_id}"
@@ -690,7 +699,7 @@ class JobManager:
         """
         try:
             # Get job metadata from RQ Job object if possible
-            job = Job.fetch(job_id, connection=self.redis)
+            job = Job.fetch(job_id, connection=self.rq_redis)
             job_metadata = job.meta or {}
             
             # Add session_id if it's not already in the metadata
