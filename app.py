@@ -1033,8 +1033,8 @@ def create_app():
                         }
                         
                         try:
-                        app.job_manager._store_job_metadata(sync_job_id, user_name, job_metadata)
-                        app.job_manager._add_job_to_session(user_name, sync_job_id)
+                            app.job_manager._store_job_metadata(sync_job_id, user_name, job_metadata)
+                            app.job_manager._add_job_to_session(user_name, sync_job_id)
                             logger.info(f"Job {sync_job_id} stored successfully")
                         except Exception as storage_error:
                             logger.warning(f"Job storage failed but processing succeeded: {storage_error}")
