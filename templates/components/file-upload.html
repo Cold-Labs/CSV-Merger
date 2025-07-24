@@ -98,7 +98,15 @@
                         </svg>
                         <div>
                             <div class="text-sm font-medium text-gray-900" x-text="file.filename"></div>
-                            <div class="text-xs text-gray-500" x-text="formatFileSize(file.size)"></div>
+                            <div class="text-xs text-gray-500">
+                                <span x-text="formatFileSize(file.size)"></span>
+                                <span x-show="file.recordCountStatus" class="ml-2">
+                                    • <span x-text="file.recordCount || 0"></span> records
+                                    <span x-show="file.recordCountStatus === 'estimating...'" class="text-yellow-600">(estimating...)</span>
+                                    <span x-show="file.recordCountStatus === 'accurate'" class="text-green-600">✓</span>
+                                    <span x-show="file.recordCountStatus === 'error'" class="text-red-600" :title="file.countingError">⚠</span>
+                                </span>
+                            </div>
                         </div>
                     </div>
                     

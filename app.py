@@ -500,6 +500,100 @@ def create_app():
             logger.error(f"File upload error: {e}", exc_info=True)
             return jsonify({'error': str(e)}), 500
 
+    @app.route('/api/files/count-records', methods=['POST'])
+    def count_records():
+        """Count records in uploaded files asynchronously"""
+        try:
+            user_id = session.get('user_id')
+            if not user_id:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            session_id = user_id
+            
+            if not app.session_manager:
+                return jsonify({'error': 'Session manager not available'}), 503
+            
+            # Get uploaded files for this session
+            uploaded_files = app.session_manager.get_session_files(session_id)
+            if not uploaded_files:
+                return jsonify({'error': 'No files found in session'}), 404
+            
+            logger.info(f"Counting records for {len(uploaded_files)} files in session {session_id}")
+            
+            file_counts = []
+            total_records = 0
+            
+            for file_info in uploaded_files:
+                file_path = file_info.get('path')
+                filename = file_info.get('filename', 'unknown')
+                
+                if not file_path or not os.path.exists(file_path):
+                    logger.warning(f"File not found for counting: {file_path}")
+                    file_counts.append({
+                        'filename': filename,
+                        'record_count': 0,
+                        'error': 'File not found'
+                    })
+                    continue
+                
+                try:
+                    # Use pandas for efficient record counting
+                    import pandas as pd
+                    
+                    # Read just the first few rows to detect structure, then count efficiently
+                    try:
+                        # First, try to detect separator and structure
+                        sample_df = pd.read_csv(file_path, nrows=5)
+                        
+                        # Now count all rows efficiently using sum() on chunks
+                        record_count = 0
+                        chunk_size = 10000  # Process in chunks to save memory
+                        
+                        for chunk in pd.read_csv(file_path, chunksize=chunk_size):
+                            record_count += len(chunk)
+                        
+                        # Subtract 1 for header row if it exists
+                        if record_count > 0:
+                            record_count -= 1  # Subtract header row
+                        
+                        file_counts.append({
+                            'filename': filename,
+                            'record_count': record_count,
+                            'columns': len(sample_df.columns) if not sample_df.empty else 0
+                        })
+                        
+                        total_records += record_count
+                        logger.info(f"File {filename}: {record_count} records")
+                        
+                    except Exception as csv_error:
+                        logger.warning(f"Error reading CSV {filename}: {csv_error}")
+                        file_counts.append({
+                            'filename': filename,
+                            'record_count': 0,
+                            'error': f'CSV parsing error: {str(csv_error)}'
+                        })
+                        
+                except Exception as e:
+                    logger.error(f"Error counting records in {filename}: {e}")
+                    file_counts.append({
+                        'filename': filename,
+                        'record_count': 0,
+                        'error': str(e)
+                    })
+            
+            logger.info(f"Record counting completed. Total records: {total_records}")
+            
+            return jsonify({
+                'success': True,
+                'total_records': total_records,
+                'files': file_counts,
+                'session_id': session_id
+            }), 200
+            
+        except Exception as e:
+            logger.error(f"Record counting error: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+
     @app.route('/api/session/clear', methods=['POST'])
     def clear_session():
         """Clear all files for the current user's session"""
@@ -913,8 +1007,8 @@ def create_app():
                         }
                         
                         try:
-                            app.job_manager._store_job_metadata(sync_job_id, user_name, job_metadata)
-                            app.job_manager._add_job_to_session(user_name, sync_job_id)
+                        app.job_manager._store_job_metadata(sync_job_id, user_name, job_metadata)
+                        app.job_manager._add_job_to_session(user_name, sync_job_id)
                             logger.info(f"Job {sync_job_id} stored successfully")
                         except Exception as storage_error:
                             logger.warning(f"Job storage failed but processing succeeded: {storage_error}")
@@ -950,7 +1044,7 @@ def create_app():
                     logger.error(f"Simplified processing failed: {e}")
                     raise
                     
-            except Exception as sync_error:
+                except Exception as sync_error:
                 # SAFETY: Comprehensive error handling for the entire processing flow
                 error_msg = f"REAL ERROR: {str(sync_error)} (Type: {type(sync_error).__name__})"
                 logger.error(f"Job processing failed: {error_msg}")

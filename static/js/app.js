@@ -697,43 +697,39 @@ function csvMergerApp() {
                 this.uploadProgress.show = false;
                 
                 if (data.success) {
-                    // Append new files to existing ones instead of replacing
+                    // Store uploaded files with estimated counts first
                     const newFiles = data.files || [];
                     
                     console.log('Server returned files:', newFiles);
-                    console.log('Frontend record counts:', fileRecordCounts);
+                    console.log('Frontend estimated counts:', fileRecordCounts);
                     
-                    // Add record counts to the file data
-                    const newFilesWithRecords = newFiles.map(file => {
-                        // Try to match by filename first, then by size as backup
+                    // Add estimated record counts to the file data
+                    const newFilesWithEstimates = newFiles.map(file => {
+                        // Try to match by filename to get estimate
                         let recordInfo = fileRecordCounts.find(rc => 
                             rc.filename === file.filename
                         );
                         
-                        // If no exact filename match, try matching by original filename or size
-                        if (!recordInfo) {
-                            recordInfo = fileRecordCounts.find(rc => 
-                                file.filename.includes(rc.filename.split('.')[0]) || 
-                                rc.size === file.size
-                            );
-                        }
-                        
-                        const recordCount = recordInfo ? recordInfo.recordCount : 0;
-                        console.log(`File ${file.filename}: matched record count ${recordCount}`);
+                        const estimatedCount = recordInfo ? recordInfo.recordCount : 0;
                         
                         return {
                             ...file,
-                            recordCount: recordCount
+                            recordCount: estimatedCount,
+                            recordCountStatus: 'estimating...' // Show this is an estimate
                         };
                     });
                     
-                    this.uploadedFiles = [...this.uploadedFiles, ...newFilesWithRecords];
+                    this.uploadedFiles = [...this.uploadedFiles, ...newFilesWithEstimates];
                     
-                    // Add new record count to total
-                    this.totalRecordCount += recordCount;
+                    // Add estimated record count to total (will be updated with real counts)
+                    const estimatedTotal = newFilesWithEstimates.reduce((sum, file) => sum + file.recordCount, 0);
+                    this.totalRecordCount += estimatedTotal;
                     
                     this.uploadProgress.percentage = 100;
-                    this.addNotification(`Successfully uploaded ${newFiles.length} new files. Total: ${this.uploadedFiles.length} files with ${this.totalRecordCount} total records`, 'success');
+                    this.addNotification(`Successfully uploaded ${newFiles.length} new files!`, 'success');
+                    
+                    // Get accurate record counts from backend asynchronously
+                    this.countRecordsAsync();
                 } else {
                     this.addNotification(data.error || 'Upload failed', 'error');
                 }
@@ -741,6 +737,71 @@ function csvMergerApp() {
             .catch(error => {
                 this.uploadProgress.show = false;
                 this.addNotification('Upload failed: ' + error.message, 'error');
+            });
+        },
+
+        countRecordsAsync() {
+            // Call backend to get accurate record counts
+            console.log('🔢 Getting accurate record counts from backend...');
+            
+            fetch('/api/files/count-records', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    console.log('✅ Backend record counts:', data);
+                    
+                    // Update uploaded files with accurate counts
+                    const backendCounts = data.files || [];
+                    
+                    this.uploadedFiles = this.uploadedFiles.map(file => {
+                        const backendFile = backendCounts.find(bf => bf.filename === file.filename);
+                        
+                        if (backendFile) {
+                            return {
+                                ...file,
+                                recordCount: backendFile.record_count,
+                                recordCountStatus: backendFile.error ? 'error' : 'accurate',
+                                columns: backendFile.columns || 0,
+                                countingError: backendFile.error || null
+                            };
+                        }
+                        
+                        return {
+                            ...file,
+                            recordCountStatus: 'error',
+                            countingError: 'Not found in backend response'
+                        };
+                    });
+                    
+                    // Update total record count with accurate numbers
+                    this.totalRecordCount = data.total_records || 0;
+                    
+                    this.addNotification(`✅ Record counting complete: ${this.totalRecordCount} total records`, 'success');
+                } else {
+                    console.error('❌ Backend record counting failed:', data.error);
+                    this.addNotification('Record counting failed: ' + data.error, 'warning');
+                    
+                    // Mark all files as having counting errors
+                    this.uploadedFiles = this.uploadedFiles.map(file => ({
+                        ...file,
+                        recordCountStatus: 'error',
+                        countingError: data.error
+                    }));
+                }
+            })
+            .catch(error => {
+                console.error('❌ Record counting error:', error);
+                this.addNotification('Record counting failed: ' + error.message, 'warning');
+                
+                // Mark all files as having counting errors
+                this.uploadedFiles = this.uploadedFiles.map(file => ({
+                    ...file,
+                    recordCountStatus: 'error',
+                    countingError: error.message
+                }));
             });
         },
 
