@@ -21,15 +21,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create necessary directories
-RUN mkdir -p temp_uploads exports logs
+# Create data directory for mounted volume (main storage location)
+RUN mkdir -p /app/data/temp_uploads /app/data/exports /app/data/logs
 
 # Copy and make startup script executable
 COPY start.sh .
 RUN chmod +x start.sh
-
-# Create data directory for mounted volume  
-RUN mkdir -p /app/data
 
 # Note: Running as root to avoid volume permission issues
 # This is common practice for Railway deployments

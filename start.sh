@@ -12,10 +12,7 @@ echo "Temp Upload Dir: $TEMP_UPLOAD_DIR"
 echo "Export Dir: $EXPORT_DIR"
 echo "Log Dir: $LOG_DIR"
 
-# Create directories if they don't exist
-echo "Creating default directories..."
-mkdir -p temp_uploads exports logs
-
+# Create volume directories (main storage location)
 echo "Creating volume directories..."
 mkdir -p /app/data/temp_uploads /app/data/exports /app/data/logs
 

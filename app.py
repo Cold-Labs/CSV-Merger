@@ -350,12 +350,13 @@ def create_app():
                 
                 # Store file using session manager
                 if app.session_manager:
-                    # Check if this is the first file after a potential session clear
-                    # If there are already 10+ files, force clear and start fresh
-                    session_info = app.session_manager.get_session(session_id, update_access=False)
+                    # Check current files in session instead of total uploaded count
+                    session_files = app.session_manager.get_session_files(session_id)
                     force_clear = False
-                    if session_info and session_info.files_uploaded >= 10:
-                        logger.warning(f"Session has {session_info.files_uploaded} files, force clearing before upload")
+                    
+                    # Only force clear if there are actually 10+ files currently in the session
+                    if len(session_files) >= 10:
+                        logger.warning(f"Session has {len(session_files)} current files, force clearing before upload")
                         force_clear = True
                     
                     file_info = app.session_manager.store_file(session_id, file, file.filename, force_clear=force_clear)
