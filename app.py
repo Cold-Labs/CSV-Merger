@@ -337,6 +337,32 @@ def create_app():
         except Exception as e:
             logger.error(f"Error clearing Redis: {e}")
             return jsonify({'error': str(e)}), 500
+
+    @app.route('/api/debug/cleanup-corrupted', methods=['POST'])
+    def debug_cleanup_corrupted():
+        """Clean up corrupted job data in Redis that's causing 502 errors"""
+        try:
+            if not app.job_manager:
+                return jsonify({'error': 'Job manager not available'}), 503
+            
+            # Get session_id from request if provided
+            data = request.get_json() or {}
+            session_id = data.get('session_id')
+            
+            # Run cleanup to fix UTF-8 decode errors
+            stats = app.job_manager.cleanup_corrupted_data(session_id)
+            
+            logger.info(f"Corrupted data cleanup completed: {stats}")
+            
+            return jsonify({
+                'success': True,
+                'message': 'Corrupted data cleanup completed - should fix 502 errors',
+                'stats': stats
+            }), 200
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up corrupted data: {e}")
+            return jsonify({'error': str(e)}), 500
     
     @app.route('/api/config', methods=['GET', 'POST'])
     def api_config():

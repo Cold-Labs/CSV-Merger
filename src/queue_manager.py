@@ -711,22 +711,48 @@ class JobManager:
             if session_id and job_metadata.get('session_id') != session_id:
                 raise ValueError("Access denied")
             
-            # Get latest progress data
+            # Get latest progress data with error handling
             progress_key = f"job_progress:{job_id}"
             progress_data = self.redis.get(progress_key)
-            progress = json.loads(progress_data) if progress_data else {}
+            progress = {}
+            if progress_data:
+                try:
+                    # Handle potential encoding issues
+                    if isinstance(progress_data, bytes):
+                        progress_data = progress_data.decode('utf-8', errors='replace')
+                    progress = json.loads(progress_data)
+                except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                    logger.warning(f"Corrupted progress data for job {job_id}: {e}")
+                    self.redis.delete(progress_key)
             
-            # Get latest status data
+            # Get latest status data with error handling  
             status_key = f"job_status:{job_id}"
             status_data = self.redis.get(status_key)
-            status = json.loads(status_data) if status_data else {}
+            status = {}
+            if status_data:
+                try:
+                    # Handle potential encoding issues
+                    if isinstance(status_data, bytes):
+                        status_data = status_data.decode('utf-8', errors='replace')
+                    status = json.loads(status_data)
+                except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                    logger.warning(f"Corrupted status data for job {job_id}: {e}")
+                    self.redis.delete(status_key)
             
-            # Get job results if completed
+            # Get job results if completed with error handling
             results = None
             if job_metadata.get('status') == 'completed':
                 results_key = f"job_results:{job_metadata['session_id']}:{job_id}"
                 results_data = self.redis.get(results_key)
-                results = json.loads(results_data) if results_data else None
+                if results_data:
+                    try:
+                        # Handle potential encoding issues
+                        if isinstance(results_data, bytes):
+                            results_data = results_data.decode('utf-8', errors='replace')
+                        results = json.loads(results_data)
+                    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                        logger.warning(f"Corrupted results data for job {job_id}: {e}")
+                        self.redis.delete(results_key)
             
             # Combine all information
             return {
@@ -831,6 +857,15 @@ class JobManager:
                         job_metadata_key = f"job:{session_id}:{job_id}"
                         job_data = self.redis.get(job_metadata_key)
                         if job_data:
+                            # Handle corrupted UTF-8 data
+                            if isinstance(job_data, bytes):
+                                try:
+                                    job_data = job_data.decode('utf-8', errors='replace')
+                                except UnicodeDecodeError:
+                                    logger.error(f"Corrupted UTF-8 data for job {job_id}, removing from Redis")
+                                    self.redis.delete(job_metadata_key)
+                                    self.redis.srem(job_key, job_id)
+                                    continue
                             job_metadata = json.loads(job_data)
                             # Create a basic job status from metadata
                             basic_job = {
@@ -1081,6 +1116,88 @@ class JobManager:
             max_concurrent = self.config.MAX_CONCURRENT_JOBS_PER_SESSION
         
         return len(active_jobs) < max_concurrent
+    
+    def cleanup_corrupted_data(self, session_id: str = None) -> Dict[str, int]:
+        """
+        Clean up corrupted job data from Redis
+        
+        Args:
+            session_id: Optional session ID to limit cleanup scope
+            
+        Returns:
+            Dictionary with cleanup statistics
+        """
+        stats = {
+            'jobs_checked': 0,
+            'corrupted_jobs_removed': 0,
+            'corrupted_progress_removed': 0,
+            'corrupted_status_removed': 0,
+            'corrupted_results_removed': 0
+        }
+        
+        try:
+            if session_id:
+                # Clean up specific session
+                session_jobs_key = f"session:{session_id}:jobs"
+                job_ids = self.redis.smembers(session_jobs_key)
+            else:
+                # Clean up all sessions (more comprehensive)
+                session_pattern = "session:*:jobs"
+                job_ids = set()
+                for key in self.redis.scan_iter(match=session_pattern):
+                    job_ids.update(self.redis.smembers(key))
+            
+            for job_id_bytes in job_ids:
+                job_id = job_id_bytes.decode('utf-8') if isinstance(job_id_bytes, bytes) else job_id_bytes
+                stats['jobs_checked'] += 1
+                
+                # Check and clean job metadata
+                if session_id:
+                    job_key = f"job:{session_id}:{job_id}"
+                    job_data = self.redis.get(job_key)
+                    if job_data and not self._is_valid_json(job_data):
+                        self.redis.delete(job_key)
+                        stats['corrupted_jobs_removed'] += 1
+                        logger.info(f"Removed corrupted job metadata: {job_id}")
+                
+                # Check and clean progress data
+                progress_key = f"job_progress:{job_id}"
+                progress_data = self.redis.get(progress_key)
+                if progress_data and not self._is_valid_json(progress_data):
+                    self.redis.delete(progress_key)
+                    stats['corrupted_progress_removed'] += 1
+                
+                # Check and clean status data
+                status_key = f"job_status:{job_id}"
+                status_data = self.redis.get(status_key)
+                if status_data and not self._is_valid_json(status_data):
+                    self.redis.delete(status_key)
+                    stats['corrupted_status_removed'] += 1
+                
+                # Check and clean results data
+                if session_id:
+                    results_key = f"job_results:{session_id}:{job_id}"
+                    results_data = self.redis.get(results_key)
+                    if results_data and not self._is_valid_json(results_data):
+                        self.redis.delete(results_key)
+                        stats['corrupted_results_removed'] += 1
+            
+            logger.info(f"Cleanup completed: {stats}")
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+            return stats
+    
+    def _is_valid_json(self, data) -> bool:
+        """Check if data can be properly decoded and parsed as JSON"""
+        try:
+            if isinstance(data, bytes):
+                data = data.decode('utf-8')
+            json.loads(data)
+            return True
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return False
     
     def _map_rq_status(self, rq_status) -> str:
         """Map RQ job status to our status format"""
