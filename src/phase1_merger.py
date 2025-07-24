@@ -52,7 +52,8 @@ class Phase1Merger:
         logger.info(f"=== PHASE 1: Merging {len(file_paths)} raw CSV files ===")
         start_time = datetime.now()
         
-        all_dataframes = []
+        # MEMORY FIX: Process files one by one instead of loading all at once
+        merged_df = None
         
         for i, file_path in enumerate(file_paths):
             try:
@@ -74,36 +75,40 @@ class Phase1Merger:
                 # Log file info
                 logger.info(f"File {source_name}: {df.shape[0]} rows, {df.shape[1]-1} columns")
                 
-                all_dataframes.append(df)
+                # MEMORY FIX: Merge immediately instead of keeping in list
+                if merged_df is None:
+                    merged_df = df
+                else:
+                    merged_df = pd.concat([merged_df, df], ignore_index=True, sort=False)
+                    # MEMORY FIX: Explicitly delete the individual DataFrame
+                    del df
+                
                 self.stats['files_processed'] += 1
+                
+                # MEMORY FIX: Force garbage collection after each file
+                import gc
+                gc.collect()
                 
             except Exception as e:
                 logger.error(f"Failed to read file {file_path}: {e}")
                 raise Exception(f"Failed to read file {os.path.basename(file_path)}: {e}")
         
-        # Merge all DataFrames
-        self._update_progress("Concatenating all files", 90, "merge")
-        logger.info("Concatenating all DataFrames...")
+        # Final validation
+        if merged_df is None:
+            raise Exception("No files were successfully processed")
         
-        try:
-            merged_df = pd.concat(all_dataframes, ignore_index=True, sort=False)
-            
-            # Update stats
-            self.stats['total_records'] = len(merged_df)
-            self.stats['total_columns'] = len(merged_df.columns) - 1  # Exclude Source column
-            self.stats['processing_time'] = (datetime.now() - start_time).total_seconds()
-            
-            logger.info(f"✅ PHASE 1 COMPLETE:")
-            logger.info(f"   • Files merged: {self.stats['files_processed']}")
-            logger.info(f"   • Total records: {self.stats['total_records']}")
-            logger.info(f"   • Unique columns: {self.stats['total_columns']}")
-            logger.info(f"   • Processing time: {self.stats['processing_time']:.2f}s")
-            
-            return merged_df
-            
-        except Exception as e:
-            logger.error(f"Failed to concatenate DataFrames: {e}")
-            raise Exception(f"Failed to merge files: {e}")
+        # Update stats
+        self.stats['total_records'] = len(merged_df)
+        self.stats['total_columns'] = len(merged_df.columns) - 1  # Exclude Source column
+        self.stats['processing_time'] = (datetime.now() - start_time).total_seconds()
+        
+        logger.info(f"✅ PHASE 1 COMPLETE:")
+        logger.info(f"   • Files merged: {self.stats['files_processed']}")
+        logger.info(f"   • Total records: {self.stats['total_records']}")
+        logger.info(f"   • Unique columns: {self.stats['total_columns']}")
+        logger.info(f"   • Processing time: {self.stats['processing_time']:.2f}s")
+        
+        return merged_df
     
     def get_stats(self) -> Dict[str, Any]:
         """Get processing statistics"""

@@ -671,11 +671,21 @@ def create_app():
                     import signal
                     import resource
                     
-                    # Set memory limit (1GB) to prevent system crashes
+                    # MEMORY FIX: Set memory limit to 512MB to fit Railway constraints 
                     try:
-                        resource.setrlimit(resource.RLIMIT_AS, (1024*1024*1024, 1024*1024*1024))
+                        resource.setrlimit(resource.RLIMIT_AS, (512*1024*1024, 512*1024*1024))  # 512MB instead of 1GB
+                        logger.info("Memory limit set to 512MB")
                     except:
-                        pass  # Ignore if cannot set limit
+                        logger.warning("Could not set memory limit - proceeding without limit")
+                    
+                    # MEMORY FIX: Add memory monitoring
+                    try:
+                        import psutil
+                        process = psutil.Process()
+                        memory_before = process.memory_info().rss / 1024 / 1024  # MB
+                        logger.info(f"Memory usage before processing: {memory_before:.1f}MB")
+                    except:
+                        logger.info("psutil not available - skipping memory monitoring")
                     
                     logger.info("Calling process_files with n8n header mapping...")
                     try:

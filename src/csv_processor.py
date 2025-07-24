@@ -112,6 +112,10 @@ class CSVProcessor:
             
             logger.info(f"Phase 1 complete: {len(merged_df)} records merged")
             
+            # MEMORY FIX: Force garbage collection after Phase 1
+            import gc
+            gc.collect()
+            
             # PHASE 2: Apply AI mappings
             self._update_progress("Phase 2: Applying AI mappings", 40, "phase2")
             logger.info("=== PHASE 2: AI-based standardization ===")
@@ -120,6 +124,10 @@ class CSVProcessor:
             
             logger.info(f"Phase 2 complete: {len(standardized_df.columns)} standard columns")
             
+            # MEMORY FIX: Delete Phase 1 DataFrame and force garbage collection
+            del merged_df
+            gc.collect()
+            
             # PHASE 3: Email enrichment and deduplication
             self._update_progress("Phase 3: Email enrichment and deduplication", 70, "phase3")
             logger.info("=== PHASE 3: Email enrichment and deduplication ===")
@@ -127,6 +135,10 @@ class CSVProcessor:
             self.stats['phase3_stats'] = self.phase3_enricher.get_stats()
             
             logger.info(f"Phase 3 complete: {len(final_df)} final records")
+            
+            # MEMORY FIX: Delete Phase 2 DataFrame and force garbage collection
+            del standardized_df
+            gc.collect()
             
             # Export final results
             self._update_progress("Exporting final results", 95, "export")

@@ -1,6 +1,8 @@
 Flask>=3.0.0
 Flask-SocketIO>=5.3.6
+# Data processing
 pandas>=2.2.0
+numpy>=1.24.0
 fuzzywuzzy>=0.18.0
 python-Levenshtein>=0.21.0
 redis>=5.0.0
@@ -14,3 +16,6 @@ APScheduler>=3.10.0
 watchdog>=3.0.0 
 fastapi>=0.104.0
 uvicorn>=0.24.0 
+
+# Performance monitoring
+psutil>=5.9.0 

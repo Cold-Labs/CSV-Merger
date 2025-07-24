@@ -6,6 +6,7 @@ import pandas as pd
 import re
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timezone
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +205,7 @@ class N8NHeaderMapper:
                 logger.info(f"File size: {file_size} bytes")
                 
                 # Read CSV with more rows to better detect empty columns
-                df = pd.read_csv(file_path, nrows=100, low_memory=False)
+                df = pd.read_csv(file_path, nrows=3, low_memory=False)  # MEMORY FIX: Reduced from 100 to 3 rows
                 original_columns = len(df.columns)
                 logger.info(f"Original CSV shape: {df.shape} (rows x columns)")
                 logger.info(f"Original headers: {list(df.columns)[:10]}...")  # First 10 headers
@@ -233,6 +234,10 @@ class N8NHeaderMapper:
                         
                 else:
                     logger.warning(f"No data rows found in {file_path}")
+                    # MEMORY FIX: Explicit cleanup before continuing
+                    del df, df_cleaned
+                    import gc
+                    gc.collect()
                     continue
                 
                 file_info = {
@@ -246,8 +251,16 @@ class N8NHeaderMapper:
                 files_data.append(file_info)
                 logger.info(f"Processed {file_info['filename']}: {original_columns} → {len(cleaned_sample_record)} columns (filtered {original_columns - len(cleaned_sample_record)} junk columns)")
                 
+                # MEMORY FIX: Explicit cleanup after each file
+                del df, df_cleaned, sample_record, cleaned_sample_record
+                import gc
+                gc.collect()
+                
             except Exception as e:
                 logger.error(f"Failed to extract headers from {file_path}: {e}")
+                # MEMORY FIX: Cleanup on error too
+                import gc
+                gc.collect()
                 continue
         
         return files_data
