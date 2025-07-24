@@ -575,58 +575,34 @@ function csvMergerApp() {
             
             this.uploadProgress.show = true;
             this.uploadProgress.percentage = 0;
-            this.uploadProgress.message = 'Starting upload...';
+            this.uploadProgress.message = 'Preparing upload...';
             
             const formData = new FormData();
             
-            // Add files to form data and count records
-            let processedFiles = 0;
-            const totalFiles = files.length;
+            // PERFORMANCE FIX: Skip record counting to avoid reading large files twice
+            // Just estimate based on file size for display purposes
             let totalRecords = 0;
-            const fileRecordCounts = []; // Store individual file record counts
+            const fileRecordCounts = [];
             
-            const processNextFile = (index) => {
-                if (index >= files.length) {
-                    // All files processed, now upload
-                    this.uploadProgress.message = 'Uploading files...';
-                    this.doUpload(formData, totalRecords, fileRecordCounts);
-                    return;
-                }
-                
-                const file = files[index];
+            files.forEach(file => {
                 formData.append('files', file);
                 
-                this.uploadProgress.message = `Counting records in ${file.name}...`;
-                this.uploadProgress.percentage = Math.round((index / totalFiles) * 50); // First 50% for counting
+                // Quick estimate: ~100 bytes per record on average
+                const estimatedRecords = Math.max(1, Math.round(file.size / 100));
+                totalRecords += estimatedRecords;
                 
-                // Count records in this file
-                this.countRecordsInFile(file).then(recordCount => {
-                    totalRecords += recordCount;
-                    fileRecordCounts.push({
-                        filename: file.name,
-                        size: file.size,
-                        recordCount: recordCount
-                    });
-                    processedFiles++;
-                    console.log(`File ${file.name}: ${recordCount} records (total so far: ${totalRecords})`);
-                    
-                    // Process next file
-                    processNextFile(index + 1);
-                }).catch(error => {
-                    console.error(`Error counting records in ${file.name}:`, error);
-                    // Continue with next file even if counting fails, but store 0 count
-                    fileRecordCounts.push({
-                        filename: file.name,
-                        size: file.size,
-                        recordCount: 0
-                    });
-                    processedFiles++;
-                    processNextFile(index + 1);
+                fileRecordCounts.push({
+                    filename: file.name,
+                    size: file.size,
+                    recordCount: estimatedRecords // Will be updated after processing
                 });
-            };
+            });
             
-            // Start processing files
-            processNextFile(0);
+            this.uploadProgress.message = 'Uploading files...';
+            this.uploadProgress.percentage = 10;
+            
+            // Upload immediately without pre-processing
+            this.doUpload(formData, totalRecords, fileRecordCounts);
         },
 
         countRecordsInFile(file) {
