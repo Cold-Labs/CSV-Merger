@@ -245,6 +245,35 @@ def create_app():
             'headers': dict(request.headers)
         })
     
+    @app.route('/api/debug/clear-redis', methods=['POST'])
+    def debug_clear_redis():
+        """TEMPORARY: Clear Redis for debugging path issues"""
+        try:
+            if not app.redis:
+                return jsonify({'error': 'Redis not available'}), 503
+            
+            # Clear all session data
+            keys_deleted = 0
+            for pattern in ['session_data:*', 'session_files:*', 'job:*', 'job_results:*']:
+                keys = app.redis.keys(pattern)
+                if keys:
+                    app.redis.delete(*keys)
+                    keys_deleted += len(keys)
+            
+            # Clear sessions index
+            app.redis.delete('sessions:active')
+            
+            logger.info(f"DEBUG: Cleared {keys_deleted} Redis keys")
+            return jsonify({
+                'success': True, 
+                'message': f'Cleared {keys_deleted} Redis keys',
+                'cleared_patterns': ['session_data:*', 'session_files:*', 'job:*', 'job_results:*']
+            })
+            
+        except Exception as e:
+            logger.error(f"Error clearing Redis: {e}")
+            return jsonify({'error': str(e)}), 500
+    
     @app.route('/api/config', methods=['GET', 'POST'])
     def api_config():
         """Get or update application configuration"""
