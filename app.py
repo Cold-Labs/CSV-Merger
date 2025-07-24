@@ -4,10 +4,6 @@ CSV Merger - Main Flask Application
 Professional lead processing for cold email agencies
 """
 
-# CRITICAL: Eventlet monkey patch MUST be first, before any other imports
-import eventlet
-eventlet.monkey_patch()
-
 import os
 import sys
 import json
@@ -28,9 +24,6 @@ from src.session_manager import SessionManager
 from src.queue_manager import JobManager
 from src.config_manager import ConfigManager
 # Removed csv_processor_minimal import - using CSVProcessor instead
-
-# Configure eventlet for async operations
-eventlet.monkey_patch()
 
 # Configure logging
 def setup_logging():
@@ -1423,7 +1416,7 @@ if __name__ == '__main__':
     
     # Start the application
     if Config.IS_PRODUCTION:
-        # Production mode with eventlet
+        # Production mode with threading
         socketio.run(
             app,
             host=Config.FLASK_HOST,
