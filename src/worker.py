@@ -128,11 +128,20 @@ class CSVWorker:
             })
             
             # Process CSV files
-            df, export_path = processor.process_files(
-                job_data['file_paths'],
-                job_data['table_type'],
-                session_id
-            )
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            try:
+                df, export_path, n8n_response = loop.run_until_complete(
+                    processor.process_files(
+                        job_data['file_paths'],
+                        job_data['table_type'],
+                        session_id
+                    )
+                )
+            finally:
+                loop.close()
             
             # Get processing statistics
             stats = processor.get_processing_stats()
@@ -179,13 +188,12 @@ class CSVWorker:
                     logger.info(f"Webhook limit applied: sending {webhook_limit} records out of {len(df)} total")
                 
                 # First step: Prepare records
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+                webhook_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(webhook_loop)
                 
                 try:
                     # Prepare records
-                    preparation_success = loop.run_until_complete(
+                    preparation_success = webhook_loop.run_until_complete(
                         webhook_sender.prepare_records(records, webhook_limit=webhook_limit)
                     )
                     
@@ -193,7 +201,7 @@ class CSVWorker:
                         raise ValueError("Failed to prepare records for webhook delivery")
                     
                     # Second step: Send records
-                    webhook_results = loop.run_until_complete(
+                    webhook_results = webhook_loop.run_until_complete(
                         webhook_sender.send_records_batch(records)
                     )
                     
@@ -220,7 +228,7 @@ class CSVWorker:
                     raise
                     
                 finally:
-                    loop.close()
+                    webhook_loop.close()
             
             # Mark job as completed
             progress_callback({
