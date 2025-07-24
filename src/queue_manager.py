@@ -816,15 +816,15 @@ class JobManager:
         try:
             job_key = f"session:{session_id}:jobs"
             job_ids = self.redis.smembers(job_key)
-        
-        jobs = []
-        for job_id_bytes in job_ids:
+            
+            jobs = []
+            for job_id_bytes in job_ids:
                 job_id = job_id_bytes.decode('utf-8') if isinstance(job_id_bytes, bytes) else job_id_bytes
-            try:
+                try:
                     # Try to get job status, but handle errors gracefully
-                job_status = self.get_job_status(job_id, session_id)
-                jobs.append(job_status)
-            except Exception as e:
+                    job_status = self.get_job_status(job_id, session_id)
+                    jobs.append(job_status)
+                except Exception as e:
                     logger.warning(f"Error getting status for job {job_id}: {e}")
                     # Try to get basic job info from Redis directly
                     try:
@@ -851,15 +851,15 @@ class JobManager:
                             logger.info(f"Retrieved basic job info for {job_id} from metadata")
                     except Exception as meta_error:
                         logger.error(f"Failed to get metadata for job {job_id}: {meta_error}")
-                # Remove invalid job from session
+                        # Remove invalid job from session
                         self.redis.srem(job_key, job_id)
                         continue
         
             # Sort by creation time (newest first)
             jobs.sort(key=lambda x: x.get('created_at', ''), reverse=True)
             logger.info(f"Retrieved {len(jobs)} jobs for session {session_id}")
-        return jobs
-        
+            return jobs
+            
         except Exception as e:
             logger.error(f"Error getting session jobs: {e}")
             return []
