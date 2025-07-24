@@ -4,24 +4,25 @@ import logging
 import shutil
 from datetime import datetime
 from typing import Dict, Any, Optional
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+# from watchdog.observers import Observer
+# from watchdog.events import FileSystemEventHandler
 
 from src.logging_config import setup_module_logger
 from config.settings import Config  # Import the main Config class
 
 logger = setup_module_logger(__name__)
 
-class ConfigFileHandler(FileSystemEventHandler):
-    """File system event handler for configuration file changes"""
-    
-    def __init__(self, config_manager):
-        self.config_manager = config_manager
-        
-    def on_modified(self, event):
-        if not event.is_directory and event.src_path.endswith('.json'):
-            logging.info(f"Configuration file modified: {event.src_path}")
-            self.config_manager.reload_mappings()
+# Disabled file watching functionality for production simplicity
+# class ConfigFileHandler(FileSystemEventHandler):
+#     """File system event handler for configuration file changes"""
+#     
+#     def __init__(self, config_manager):
+#         self.config_manager = config_manager
+#         
+#     def on_modified(self, event):
+#         if not event.is_directory and event.src_path.endswith('.json'):
+#             logging.info(f"Configuration file modified: {event.src_path}")
+#             self.config_manager.reload_mappings()
 
 class ConfigManager:
     """Manages field mappings and configuration with hot-reload capability"""
@@ -369,11 +370,11 @@ class ConfigManager:
     def _setup_file_watcher(self):
         """Setup file system watcher for hot-reload"""
         try:
-            # TODO: Fix file watcher threading issue - temporarily disabled
-            logging.info("File watcher temporarily disabled to fix startup hang")
+            # File watcher disabled in production to avoid watchdog dependency
+            logging.info("File watcher disabled for production deployment")
             return
             
-            # This code hangs on startup - debugging needed
+            # This code requires watchdog dependency - disabled for production
             # self.observer = Observer()
             # event_handler = ConfigFileHandler(self)
             # 
@@ -389,10 +390,13 @@ class ConfigManager:
     def stop_file_watcher(self):
         """Stop the file system watcher"""
         try:
-            if hasattr(self, 'observer'):
+            # File watcher disabled in production - no observer to stop
+            if hasattr(self, 'observer') and self.observer:
                 self.observer.stop()
                 self.observer.join()
-            logging.info("File watcher stopped")
+                logging.info("File watcher stopped")
+            else:
+                logging.debug("No file watcher to stop (disabled in production)")
         except Exception as e:
             logging.error(f"Error stopping file watcher: {e}")
     
