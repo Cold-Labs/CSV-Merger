@@ -1071,24 +1071,24 @@ def create_app():
                     raise
                     
                 except Exception as sync_error:
-                # SAFETY: Comprehensive error handling for the entire processing flow
-                error_msg = f"REAL ERROR: {str(sync_error)} (Type: {type(sync_error).__name__})"
-                logger.error(f"Job processing failed: {error_msg}")
-                
-                # Clear any timeouts
-                try:
-                    signal.alarm(0)
-                except:
-                    pass
-                
-                # Force garbage collection on error
-                try:
-                    import gc
-                    gc.collect()
-                except:
-                    pass
-                
-                return jsonify({'error': error_msg}), 500
+                    # SAFETY: Comprehensive error handling for the entire processing flow
+                    error_msg = f"REAL ERROR: {str(sync_error)} (Type: {type(sync_error).__name__})"
+                    logger.error(f"Job processing failed: {error_msg}")
+                    
+                    # Clear any timeouts
+                    try:
+                        signal.alarm(0)
+                    except:
+                        pass
+                    
+                    # Force garbage collection on error
+                    try:
+                        import gc
+                        gc.collect()
+                    except:
+                        pass
+                    
+                    return jsonify({'error': error_msg}), 500
         
         except Exception as e:
             logger.error(f"Job submission error: {e}")
