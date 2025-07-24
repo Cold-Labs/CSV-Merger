@@ -4,12 +4,29 @@ CSV Merger - Main Flask Application
 Professional lead processing for cold email agencies
 """
 
+# CRITICAL: Memory optimizations FIRST to prevent startup memory issues
+import gc
+import resource
+
+# Force aggressive garbage collection
+gc.set_threshold(100, 10, 10)
+gc.collect()
+
+# Set memory limits BEFORE any heavy imports
+try:
+    # Limit virtual memory to 350MB (Railway has ~512MB total, leaving room for Redis)
+    resource.setrlimit(resource.RLIMIT_AS, (350*1024*1024, 350*1024*1024))
+    print("✅ Memory limit set: 350MB virtual memory")
+except Exception as e:
+    print(f"⚠️ Could not set memory limits: {e}")
+
 import os
 import sys
 import json
 import logging
 import asyncio
-from datetime import datetime, timezone
+import signal
+from datetime import datetime, timezone, timedelta
 from functools import wraps
 
 import redis
@@ -45,9 +62,28 @@ def create_app():
     
     logger = logging.getLogger(__name__)
     
-    # Initialize Flask app
-    app = Flask(__name__)
-    app.config.update(Config.get_flask_config())
+    # Initialize Flask app with memory-efficient settings
+    app = Flask(__name__, 
+                static_folder='static',
+                template_folder='templates')
+    
+    # CRITICAL: Memory-efficient Flask configuration
+    flask_config = Config.get_flask_config()
+    
+    # Add memory optimizations to Flask config
+    flask_config.update({
+        'SEND_FILE_MAX_AGE_DEFAULT': 0,  # Disable static file caching
+        'JSON_SORT_KEYS': False,  # Reduce JSON processing overhead
+        'JSONIFY_PRETTYPRINT_REGULAR': False,  # Compact JSON output
+        'SESSION_PERMANENT': False,  # Don't store sessions permanently
+        'PERMANENT_SESSION_LIFETIME': timedelta(hours=1),  # Shorter session time
+        'MAX_CONTENT_LENGTH': 20 * 1024 * 1024,  # 20MB max upload
+    })
+    
+    app.config.update(flask_config)
+    
+    # Force garbage collection after config
+    gc.collect()
     
     # Initialize SocketIO with threading instead of eventlet to avoid blocking conflicts
     socketio = SocketIO(
@@ -87,17 +123,20 @@ def create_app():
                 logger.error("All Redis connection attempts failed. App will start without Redis (degraded mode)")
                 redis_client = None
     
-    # Initialize managers with debug logging
+    # Initialize managers with debug logging and memory cleanup
     logger.info("Initializing ConfigManager...")
     config_manager = ConfigManager(Config.FIELD_MAPPINGS_FILE)
+    gc.collect()  # Clean up after config loading
     logger.info("ConfigManager initialized successfully")
     
     logger.info("Initializing SessionManager...")
     session_manager = SessionManager(redis_client, Config()) if redis_client else None
+    gc.collect()  # Clean up after session manager
     logger.info("SessionManager initialized successfully" if session_manager else "SessionManager skipped (no Redis)")
     
     logger.info("Initializing JobManager...")  
     job_manager = JobManager(redis_client, Config()) if redis_client else None
+    gc.collect()  # Clean up after job manager
     logger.info("JobManager initialized successfully" if job_manager else "JobManager skipped (no Redis)")
     
     # Store managers in app context
@@ -725,56 +764,96 @@ def create_app():
                         logger.error(error_msg)
                         raise FileNotFoundError(error_msg)
                     
-                    # SAFETY: Set memory limit to 512MB to fit Railway constraints 
+                    # CRITICAL: Pre-processing memory checks and aggressive cleanup
+                    import psutil
                     try:
-                        import resource
-                        resource.setrlimit(resource.RLIMIT_AS, (512*1024*1024, 512*1024*1024))  # 512MB instead of 1GB
-                        logger.info("Memory limit set to 512MB")
-                    except:
-                        logger.warning("Could not set memory limit - proceeding without limit")
+                        # Force garbage collection before processing
+                        gc.collect()
+                        gc.collect()  # Call twice for better cleanup
+                        
+                        # Check available memory 
+                        memory = psutil.virtual_memory()
+                        available_mb = memory.available / (1024 * 1024)
+                        logger.info(f"Available memory before processing: {available_mb:.1f}MB")
+                        
+                        if available_mb < 100:  # Less than 100MB available
+                            raise Exception(f"Insufficient memory: {available_mb:.1f}MB available")
+                            
+                        # Set aggressive memory limit for this process
+                        resource.setrlimit(resource.RLIMIT_AS, (300*1024*1024, 300*1024*1024))  # 300MB limit
+                        logger.info("Memory limit set to 300MB for processing")
+                        
+                    except Exception as mem_error:
+                        logger.warning(f"Memory check/limit failed: {mem_error}")
+                        # Continue but with extra caution
                     
-                    logger.info("Starting CSV processing with simplified approach...")
+                    logger.info("Starting CSV processing with aggressive memory management...")
                     
-                    # SIMPLIFIED: Create simple progress callback first (before using it)
+                    # SIMPLIFIED: Create minimal progress callback
                     def sync_progress_callback(*args, **kwargs):
-                        """Simplified progress callback"""
+                        """Memory-efficient progress callback"""
                         message = kwargs.get('message', 'Processing...')
                         logger.info(f"Progress: {message}")
-                        # Note: Skip socketio emission to avoid threading conflicts
+                        # Force cleanup after each progress update
+                        gc.collect()
                     
-                    # SAFETY: Create CSV processor with error handling
+                    # CRITICAL: Set processing timeout to prevent hanging
+                    signal.signal(signal.SIGALRM, lambda x, y: (_ for _ in ()).throw(TimeoutError("Processing timeout")))
+                    signal.alarm(180)  # 3 minutes timeout
+                    
+                    # MEMORY OPTIMIZATION: Process with aggressive cleanup
+                    logger.info("Starting memory-optimized processing...")
+                    
+                    df = None
+                    export_path = None
+                    n8n_response = None
+                    processor = None
+                    
                     try:
+                        # Force cleanup before creating processor
+                        gc.collect()
+                        
+                        # Create processor with minimal memory footprint
                         from src.csv_processor import CSVProcessor
                         processor = CSVProcessor(app.config_manager, sync_progress_callback, session_manager=app.session_manager)
                         logger.info("CSV processor created successfully")
-                    except Exception as e:
-                        logger.error(f"Failed to create CSV processor: {e}")
-                        raise Exception(f"CSV processor creation failed: {e}")
-                    
-                    # MEMORY OPTIMIZATION: Process with minimal memory footprint
-                    logger.info("Starting simplified synchronous processing...")
-                    
-                    # Call the async method but handle it synchronously in a safer way
-                    import asyncio
-                    
-                    # Create new event loop in thread-safe way
-                    try:
-                        # Don't use existing loop to avoid eventlet conflicts
+                        
+                        # Process files with asyncio but in a memory-safe way
+                        import asyncio
+                        
+                        # Create new event loop
                         new_loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(new_loop)
                         
-                        # Process files
-                        result = new_loop.run_until_complete(
-                            processor.process_files(file_paths, table_type, session_id)
-                        )
+                        try:
+                            # Process files with timeout
+                            result = new_loop.run_until_complete(
+                                processor.process_files(file_paths, table_type, session_id)
+                            )
+                            
+                            df, export_path, n8n_response = result
+                            logger.info("✅ Processing completed successfully")
+                            
+                        finally:
+                            # Always clean up the event loop
+                            new_loop.close()
+                            asyncio.set_event_loop(None)
                         
-                        df, export_path, n8n_response = result
-                        
-                        # Clean up loop
-                        new_loop.close()
+                        # Aggressive cleanup after processing
+                        del processor
+                        if df is not None:
+                            del df
+                        gc.collect()
+                        gc.collect()  # Double cleanup
                         
                     except Exception as process_error:
                         logger.error(f"Processing failed: {process_error}")
+                        
+                        # Cleanup on error
+                        if processor:
+                            del processor
+                        gc.collect()
+                        
                         raise Exception(f"CSV processing failed: {process_error}")
                         
                     # Clear timeout
