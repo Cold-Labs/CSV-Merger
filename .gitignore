@@ -127,4 +127,5 @@ config/backup/
 .redis-dump.rdb
 
 # Railway deployment
-.railway/ 
+.railway/ # Backup folder for deleted config files
+.deleted_configs/
