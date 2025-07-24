@@ -223,6 +223,19 @@ def create_app():
             health_data['session_manager'] = 'active' if session_manager else 'inactive'
             health_data['job_manager'] = 'active' if job_manager else 'inactive'
             
+            # CRITICAL: Add memory monitoring for Railway
+            try:
+                import psutil
+                memory = psutil.virtual_memory()
+                health_data['memory'] = {
+                    'available_mb': round(memory.available / (1024 * 1024), 1),
+                    'used_percent': memory.percent,
+                    'total_mb': round(memory.total / (1024 * 1024), 1),
+                    'status': 'critical' if memory.available < 50*1024*1024 else 'low' if memory.available < 100*1024*1024 else 'ok'
+                }
+            except Exception as mem_error:
+                health_data['memory'] = {'error': str(mem_error)}
+            
             status_code = 200 if health_data['status'] == 'healthy' else 503
             return jsonify(health_data), status_code
             
