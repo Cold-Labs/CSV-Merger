@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV Merger - Simplified</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/custom.css') }}">
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-900 mb-2">CSV Merger</h1>
+            <p class="text-gray-600">Upload, process, and merge CSV files with AI-powered column mapping</p>
+        </div>
+        
+        <!-- Toast Container -->
+        <div id="toastContainer" class="fixed top-4 right-4 z-50 space-y-2 w-80"></div>
+        
+        <!-- Loading Indicator -->
+        <div id="loadingIndicator" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white p-6 rounded-lg flex items-center space-x-3">
+                <div class="loading-spinner"></div>
+                <span id="loadingText">Loading...</span>
+            </div>
+        </div>
+        
+        <!-- File Upload Section -->
+        <div id="uploadSection" class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">Upload CSV Files</h2>
+            <p class="text-gray-600 mb-4">Upload multiple CSV files for processing (max 20MB per file)</p>
+            
+            <!-- Drag and Drop Area -->
+            <div id="dropZone" class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center mb-6 hover:border-blue-400 transition-colors">
+                <div class="flex flex-col items-center">
+                    <svg class="w-12 h-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                    </svg>
+                    <h3 class="text-lg font-medium text-gray-900 mb-2">Drop CSV files here</h3>
+                    <p class="text-gray-500 mb-4">or click to browse</p>
+                    <button type="button" onclick="document.getElementById('csvFiles').click()" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors">
+                        Select Files
+                    </button>
+                </div>
+                <input 
+                    type="file" 
+                    id="csvFiles" 
+                    multiple 
+                    accept=".csv"
+                    class="hidden"
+                >
+                <div class="mt-4 text-sm text-gray-500">
+                    <p>• Supported format: CSV files only</p>
+                    <p>• Maximum file size: 20MB per file</p>
+                    <p>• Maximum files: 10 files per session</p>
+                </div>
+            </div>
+            
+            <!-- Uploaded Files Section -->
+            <div id="uploadedFilesSection" class="hidden">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-medium">Uploaded Files</h3>
+                    <div class="flex space-x-4">
+                        <span id="fileCount" class="text-sm text-gray-600">1 files</span>
+                        <button onclick="clearAllFiles()" class="text-sm text-red-600 hover:text-red-800">Clear All</button>
+                    </div>
+                </div>
+                
+                <!-- File List -->
+                <div id="fileList" class="space-y-2 mb-6">
+                    <p class="text-gray-500">No files selected</p>
+                </div>
+                
+                <!-- Summary Stats -->
+                <div class="grid grid-cols-3 gap-4 p-4 bg-gray-50 rounded-lg">
+                    <div class="text-center">
+                        <div class="text-2xl font-bold text-blue-600" id="summaryFiles">0</div>
+                        <div class="text-sm text-gray-600">Files</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-2xl font-bold text-blue-600" id="summarySize">0 B</div>
+                        <div class="text-sm text-gray-600">Total Size</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-2xl font-bold text-blue-600" id="summaryRecords">0</div>
+                        <div class="text-sm text-gray-600">Est. Records</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Processing Configuration -->
+        <div id="configSection" class="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 class="text-xl font-semibold mb-4">Processing Configuration</h2>
+            <p class="text-gray-600 mb-6">Configure how your CSV files will be processed</p>
+            
+                            <!-- Data Type Selection -->
+            <div class="mb-8">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Data Type</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- People Data Card -->
+                    <label class="radio-card cursor-pointer">
+                        <input type="radio" name="dataType" value="people" id="tableType" checked class="sr-only">
+                        <div class="radio-card-content border-2 border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="font-medium text-gray-900">People Data</h4>
+                                <svg class="w-5 h-5 text-blue-500 check-icon" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                                </svg>
+                            </div>
+                            <p class="text-sm text-gray-600">Contacts, leads, employees</p>
+                        </div>
+                    </label>
+                    
+                    <!-- Company Data Card -->
+                    <label class="radio-card cursor-pointer">
+                        <input type="radio" name="dataType" value="company" class="sr-only">
+                        <div class="radio-card-content border-2 border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="font-medium text-gray-900">Company Data</h4>
+                                <svg class="w-5 h-5 text-blue-500 check-icon" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                                </svg>
+                            </div>
+                            <p class="text-sm text-gray-600">Organizations, businesses</p>
+                        </div>
+                    </label>
+                </div>
+            </div>
+            
+                            <!-- Output Method Selection -->
+            <div class="mb-8">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Output Method</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- CSV Download Card -->
+                    <label class="radio-card cursor-pointer">
+                        <input type="radio" name="outputMethod" value="download" id="outputMethodDownload" checked onchange="toggleWebhookConfig()" class="sr-only">
+                        <div class="radio-card-content border-2 border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="font-medium text-gray-900">CSV Download</h4>
+                                <svg class="w-5 h-5 text-blue-500 check-icon" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                                </svg>
+                            </div>
+                            <p class="text-sm text-gray-600">Download processed file</p>
+                        </div>
+                    </label>
+                    
+                    <!-- Webhook Delivery Card -->
+                    <label class="radio-card cursor-pointer">
+                        <input type="radio" name="outputMethod" value="webhook" id="outputMethodWebhook" onchange="toggleWebhookConfig()" class="sr-only">
+                        <div class="radio-card-content border-2 border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="font-medium text-gray-900">Webhook Delivery</h4>
+                                <svg class="w-5 h-5 text-blue-500 check-icon" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path>
+                                </svg>
+                            </div>
+                            <p class="text-sm text-gray-600">Send to API endpoint</p>
+                        </div>
+                    </label>
+                </div>
+            </div>
+            
+            <!-- Webhook Configuration (hidden by default) -->
+            <div id="webhookConfig" class="hidden">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Webhook Configuration</h3>
+                
+                <!-- Webhook URL -->
+                <div class="mb-4">
+                    <label for="webhookUrl" class="block text-sm font-medium text-gray-700 mb-2">
+                        Webhook URL
+                    </label>
+                    <div class="flex space-x-2">
+                        <input 
+                            type="url" 
+                            id="webhookUrl" 
+                            placeholder="https://your-webhook-endpoint.com/receive-data"
+                            class="flex-1 border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                        <button 
+                            id="testWebhookBtn"
+                            onclick="testWebhook()"
+                            class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                            disabled
+                        >
+                            Test
+                        </button>
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1">
+                        Use the Test button to send sample data to verify your webhook works
+                    </p>
+                </div>
+                
+                <!-- Advanced Settings -->
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <h4 class="text-sm font-medium text-gray-700 mb-3">Advanced Settings</h4>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- Rate Limit -->
+                        <div>
+                            <label for="rateLimit" class="block text-xs font-medium text-gray-600 mb-1">
+                                Rate Limit (requests/second)
+                            </label>
+                            <input 
+                                type="number" 
+                                id="rateLimit" 
+                                value="15"
+                                min="1"
+                                max="100"
+                                class="block w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                            <p class="text-xs text-gray-500 mt-1">Avoid overwhelming your webhook endpoint</p>
+                        </div>
+                        
+                        <!-- Record Limit -->
+                        <div>
+                            <label for="recordLimit" class="block text-xs font-medium text-gray-600 mb-1">
+                                Record Limit (for testing)
+                            </label>
+                            <input 
+                                type="number" 
+                                id="recordLimit" 
+                                placeholder="Leave empty for all records"
+                                min="1"
+                                class="block w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                            <p class="text-xs text-gray-500 mt-1">Limit records sent for testing (e.g., 10)</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Start Processing Section -->
+        <div id="actionsSection" class="bg-white rounded-lg shadow p-6 mb-6">
+            <div class="text-center">
+                <button 
+                    id="startProcessingBtn" 
+                    disabled
+                    onclick="startProcessing()"
+                    class="bg-blue-600 text-white px-8 py-3 rounded-lg text-lg font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                >
+                    Start Processing
+                </button>
+                <p class="text-sm text-gray-500 mt-2">Process your CSV files with AI-powered header mapping and enrichment</p>
+            </div>
+        </div>
+        
+        <!-- Progress Section -->
+        <div id="progressContainer" class="bg-white rounded-lg shadow p-6 mb-6" style="display: none;">
+            <h2 class="text-xl font-semibold mb-4">Processing Progress</h2>
+            
+            <div class="mb-2 flex justify-between text-sm">
+                <span id="progressText">Processing...</span>
+                <span id="progressPercent">0%</span>
+            </div>
+            
+            <div class="w-full bg-gray-200 rounded-full h-3">
+                <div 
+                    id="progressBar" 
+                    class="bg-blue-600 h-3 rounded-full transition-all duration-300"
+                    style="width: 0%"
+                ></div>
+            </div>
+            
+            <!-- Stop Button -->
+            <div class="mt-4 flex justify-center">
+                <button 
+                    id="stopJobBtn"
+                    onclick="stopJob()"
+                    class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    style="display: none;"
+                >
+                    Stop Processing
+                </button>
+            </div>
+            
+            <div class="mt-4 text-sm text-gray-600">
+                <p><strong>Phase 1:</strong> Merging CSV files with source tracking</p>
+                <p><strong>Phase 2:</strong> AI standardization via n8n mapping</p>
+                <p><strong>Phase 3:</strong> Email enrichment and deduplication</p>
+            </div>
+        </div>
+        
+        <!-- Download Result Section -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h2 class="text-xl font-semibold mb-4">Download Result</h2>
+            
+            <button 
+                id="downloadResultBtn" 
+                style="display: none;"
+                class="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 font-medium"
+            >
+                Download Processed CSV
+            </button>
+            
+            <p class="text-gray-600">
+                Your processed file will be available here once processing is complete.
+            </p>
+        </div>
+    </div>
+    
+    <!-- JavaScript -->
+    <script src="/static/simple_app.js"></script>
+</body>
+</html> 

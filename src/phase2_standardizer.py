@@ -5,6 +5,7 @@ from typing import Dict, List, Tuple, Optional, Any
 import re
 from datetime import datetime
 import json
+import os
 
 from src.logging_config import setup_module_logger
 
@@ -21,6 +22,7 @@ class Phase2Standardizer:
     def __init__(self, config_manager, progress_callback=None):
         self.config_manager = config_manager
         self.progress_callback = progress_callback
+        self.n8n_mapping_time = 0
         self.stats = {
             'headers_mapped': 0,
             'primary_mappings': 0,
@@ -39,6 +41,100 @@ class Phase2Standardizer:
             if stage:
                 progress_data['stage'] = stage
             self.progress_callback(progress_data)
+    
+    async def map_and_standardize(self, merged_df: pd.DataFrame, table_type: str, session_id: str, header_mapper, progress_callback=None):
+        """
+        PHASE 2: Send cleaned headers + sample to n8n for AI mapping, then apply mappings
+        
+        Args:
+            merged_df: Cleaned and merged DataFrame from Phase 1
+            table_type: 'people' or 'company'
+            session_id: Session ID
+            header_mapper: HeaderMapper instance for n8n calls
+            progress_callback: Progress callback function
+            
+        Returns:
+            Tuple of (standardized_df, n8n_response)
+        """
+        import time
+        import json
+        
+        logger.info("=== PHASE 2: AI mapping and standardization ===")
+        
+        # Step 1: Extract headers and sample data from cleaned DataFrame
+        if progress_callback:
+            progress_callback(percentage=35, message="Extracting headers and sample data for AI mapping...", stage="phase2")
+        
+        headers = list(merged_df.columns)
+        sample_data = merged_df.head(1).to_dict('records')[0] if len(merged_df) > 0 else {}
+        
+        logger.info(f"Extracted {len(headers)} headers from cleaned data")
+        logger.info(f"Headers: {headers}")
+        
+        # Step 2: Send to n8n for AI mapping
+        if progress_callback:
+            progress_callback(percentage=40, message="Sending cleaned headers to n8n for AI mapping...", stage="n8n_mapping")
+        
+        logger.info("🔍 === PHASE 2 N8N DEBUG START ===")
+        logger.info("Sending cleaned headers + sample to n8n...")
+        n8n_start_time = time.time()
+        
+        # Instead of creating a single merged file, create separate temp files for each original source
+        # This preserves the individual file information in the n8n payload
+        os.makedirs(f"uploads/{session_id}", exist_ok=True)
+        
+        original_sources = merged_df['Source'].unique() if 'Source' in merged_df.columns else ['unknown']
+        temp_file_paths = []
+        
+        logger.info(f"Creating {len(original_sources)} separate temp files for n8n (one per original file)")
+        
+        for source in original_sources:
+            # Filter data for this specific source file
+            source_df = merged_df[merged_df['Source'] == source] if 'Source' in merged_df.columns else merged_df
+            
+            # Create temp filename based on source
+            base_name = source.replace('.csv', '')
+            temp_filename = f"{base_name}_cleaned_headers.csv"
+            temp_csv_path = f"uploads/{session_id}/{temp_filename}"
+            
+            # Save sample data for this source (first 5 rows)
+            sample_df = source_df.head(5)
+            sample_df.to_csv(temp_csv_path, index=False)
+            
+            temp_file_paths.append(temp_csv_path)
+            logger.info(f"Created temp file for {source}: {temp_csv_path} ({len(source_df)} total rows)")
+        
+        n8n_response = await header_mapper.map_headers(
+            file_paths=temp_file_paths,
+            table_type=table_type,
+            session_id=session_id
+        )
+        
+        # Clean up temp files
+        for temp_path in temp_file_paths:
+            try:
+                os.remove(temp_path)
+                logger.info(f"Cleaned up temp file: {temp_path}")
+            except Exception as e:
+                logger.warning(f"Could not remove temp file {temp_path}: {e}")
+        
+        self.n8n_mapping_time = time.time() - n8n_start_time
+        logger.info(f"🔍 N8N Response received in {self.n8n_mapping_time:.2f}s")
+        logger.info(f"🔍 N8N Response: {json.dumps(n8n_response, indent=2) if n8n_response else 'EMPTY'}")
+        
+        if progress_callback:
+            progress_callback(percentage=50, message="Received AI mappings from n8n, applying to data...", stage="phase2", n8n_response=n8n_response)
+        
+        # Step 3: Apply the n8n mappings to the cleaned DataFrame
+        standardized_df = self.apply_n8n_mappings(merged_df, n8n_response, table_type)
+        
+        logger.info(f"Phase 2 complete: {len(standardized_df.columns)} standard columns")
+        
+        return standardized_df, n8n_response
+    
+    def get_n8n_time(self):
+        """Get n8n mapping time"""
+        return self.n8n_mapping_time
     
     def apply_n8n_mappings(self, merged_df: pd.DataFrame, n8n_response: Dict, table_type: str) -> pd.DataFrame:
         """

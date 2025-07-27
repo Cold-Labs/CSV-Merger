@@ -1,0 +1,35 @@
+/* Minimal Custom CSS - Let Tailwind handle most styling */
+
+/* Radio Button Enhancement - Only for functionality */
+.radio-card input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+}
+
+/* Hide radio indicator completely - we only want the checkmark */
+.radio-indicator {
+    display: none;
+}
+
+/* Selected state - only show border and checkmark */
+.radio-card input[type="radio"]:checked + .radio-card-content {
+    border-color: #3b82f6 !important;
+}
+
+.radio-card input[type="radio"]:checked + .radio-card-content .check-icon {
+    opacity: 1;
+}
+
+/* Check icon hidden by default */
+.check-icon {
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+/* Basic transitions */
+.radio-card-content {
+    transition: border-color 0.15s ease;
+} 
