@@ -2,6 +2,9 @@
 Flask>=3.0.0
 Flask-SocketIO>=5.3.6
 
+# Production server
+eventlet>=0.33.0
+
 # Data processing
 pandas>=2.2.0
 numpy>=1.24.0

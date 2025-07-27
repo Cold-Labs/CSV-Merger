@@ -1,99 +1,63 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+# Version control
+.git
+.gitignore
 
-# Virtual environments
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache
+*.egg-info
+.coverage
+
+# Virtual environment
 venv/
 env/
-ENV/
+.venv/
 
-# IDE files
+# IDE
 .vscode/
-.idea/
+.cursor/
 *.swp
 *.swo
-*~
 
-# OS files
+# OS
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
 # Logs
 *.log
 logs/
 
-# Temporary files
-temp_uploads/
-exports/
-*.tmp
-*.temp
-
-# Git
-.git/
-.gitignore
-
-# Documentation and development files
-README.md
-*.md
-docs/
-
-# Test files
-tests/
-test_*.py
-*_test.py
-
-# Coverage
-.coverage
-htmlcov/
-.pytest_cache/
-
 # Local development
 .env
 .env.local
-.env.development
 
-# Node modules (if any)
-node_modules/
+# Uploads and temporary files
+uploads/
+temp_uploads/
+exports/
 
-# Docker files (don't copy into container)
-Dockerfile*
-docker-compose*.yml
+# Documentation and help files
+docs/
+railway-help/
+*.md
+CLEANUP_README.md
 
-# Railway and deployment
-railway.toml
-.github/
+# Test files
+test_files/
+tests/
 
-# Backup files
-*.bak
-*.backup
+# Backup configs
+.deleted_configs/
 
-# Database files
-*.db
-*.sqlite
-*.sqlite3
+# Session files
+session_id.tmp
 
-# Redis dump
-dump.rdb 
+# Other temporary files
+*.tmp
+worker.log
+deploy-logs.txt 

@@ -19,8 +19,23 @@ from simple_csv_processor import CSVProcessor
 from simple_config import Config
 from cleanup_uploads import UploadCleanup
 
+# Redis configuration for Railway deployment
+def get_redis_config():
+    """Get Redis configuration from environment variables"""
+    redis_url = os.getenv('REDIS_URL')
+    if redis_url:
+        # Railway Redis addon provides REDIS_URL
+        return redis.from_url(redis_url)
+    else:
+        # Fallback to localhost for development
+        return redis.Redis(
+            host=os.getenv('REDIS_HOST', 'localhost'),
+            port=int(os.getenv('REDIS_PORT', 6379)),
+            db=int(os.getenv('REDIS_DB', 0))
+        )
+
 # Redis client for shared state
-redis_client = redis.Redis(host='localhost', port=6379, db=0)
+redis_client = get_redis_config()
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
@@ -29,8 +44,8 @@ app.config['UPLOAD_FOLDER'] = 'uploads'
 # Ensure upload directory exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# Redis connection for job queue
-redis_conn = redis.Redis(host='localhost', port=6379, db=0)
+# Redis connection for job queue (use same config as main Redis client)
+redis_conn = redis_client
 job_queue = Queue('csv_processing', connection=redis_conn)
 
 # Global storage for job status (simplified)
@@ -633,11 +648,15 @@ def start_background_cleanup():
     print("🕒 Background cleanup scheduled (runs every hour)")
 
 if __name__ == '__main__':
+    # Get port from environment (Railway sets this)
+    port = int(os.getenv('PORT', 8000))
+    debug = os.getenv('FLASK_ENV') != 'production'
+    
     print("🚀 Starting CSV Merger (Simplified)")
     print("📁 Upload folder:", app.config['UPLOAD_FOLDER'])
-    print("🔗 Redis connection: localhost:6379")
-    print("🌐 Server will start on: http://localhost:8000")
+    print(f"🔗 Redis connection: {redis_client.connection_pool.connection_kwargs.get('host', 'configured')}")
+    print(f"🌐 Server will start on: http://0.0.0.0:{port}")
     
     # Start automatic cleanup
     start_background_cleanup()
-    app.run(host='0.0.0.0', port=8000, debug=True) 
+    app.run(host='0.0.0.0', port=port, debug=debug) 
