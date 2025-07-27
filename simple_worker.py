@@ -14,7 +14,22 @@ from simple_config import Config
 
 # Redis-based job status storage (shared with main app)
 from redis import Redis
-redis_client = Redis(host='localhost', port=6379, db=0)
+
+def get_redis_config():
+    """Get Redis configuration from environment variables (same as main app)"""
+    redis_url = os.getenv('REDIS_URL')
+    if redis_url:
+        # Railway Redis addon provides REDIS_URL
+        return Redis.from_url(redis_url)
+    else:
+        # Fallback to localhost for development
+        return Redis(
+            host=os.getenv('REDIS_HOST', 'localhost'),
+            port=int(os.getenv('REDIS_PORT', 6379)),
+            db=int(os.getenv('REDIS_DB', 0))
+        )
+
+redis_client = get_redis_config()
 job_status = {}
 
 def send_processed_data_webhook_sync(app_job_id=None, result_path=None, webhook_url=None, rate_limit=5, record_limit=None, table_type=None):
@@ -316,11 +331,10 @@ class WebhookSender:
     def _is_job_cancelled(self, job_id: str) -> bool:
         """Check if job has been cancelled"""
         try:
-            import redis
-            redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
             cancelled = redis_client.hget(f'job_cancel:{job_id}', 'cancelled')
-            return cancelled == 'true'
-        except:
+            return cancelled == b'true' if isinstance(cancelled, bytes) else cancelled == 'true'
+        except Exception as e:
+            print(f"⚠️ Cancel check failed: {e}")
             return False
     
     def _send_individual_record_with_retry(self, record: Dict, record_num: int, max_retries: int, table_type: str) -> bool:
