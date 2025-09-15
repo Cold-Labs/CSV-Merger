@@ -7,6 +7,7 @@ import re
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime, timezone
 import os
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -134,9 +135,15 @@ class N8NHeaderMapper:
             
         # Filter out boolean-like columns with empty/false values
         if value_str.lower() in ['', 'false', 'true', '0', '1', 'none', 'null']:
-            # But keep important boolean fields
-            important_booleans = ['verified', 'active', 'current', 'primary', 'valid']
-            if not any(term in column_lower for term in important_booleans):
+            # But keep important fields even if they're empty (for composite sample enrichment)
+            important_fields = [
+                'verified', 'active', 'current', 'primary', 'valid',  # booleans
+                'email', 'e-mail', 'mail',  # email fields
+                'phone', 'telephone', 'mobile', 'cell',  # phone fields  
+                'name', 'title', 'position', 'role',  # key identity fields
+                'company', 'organization', 'domain', 'website'  # company fields
+            ]
+            if not any(term in column_lower for term in important_fields):
                 return True
         
         # Filter out nested array indices that are empty
@@ -179,6 +186,138 @@ class N8NHeaderMapper:
         if len(cleaned_record) == 0:
             logger.warning("WARNING: All columns were filtered out! This might be too aggressive.")
         return cleaned_record
+
+    def _create_enriched_sample(self, cleaned_sample_record: Dict[str, str], file_path: str, 
+                               max_rows_to_scan: int = 1000) -> Dict[str, str]:
+        """
+        🚀 BULLETPROOF Sample Enrichment: Fill empty fields from other rows (AFTER filtering)
+        
+        Args:
+            cleaned_sample_record: Already filtered sample record (from _clean_sample_record)
+            file_path: Path to the CSV file (for re-reading and logging)
+            max_rows_to_scan: Maximum number of rows to scan for filling empty fields (conservative: 1000)
+            
+        Returns:
+            Dictionary with enriched sample record where empty fields are filled from other rows
+            Falls back to original sample if ANYTHING goes wrong (bulletproof)
+        """
+        start_time = time.time()
+        filename = file_path.split('/')[-1]
+        
+        # MODIFIED: Always create a composite sample for better AI mapping
+        # Track which fields are empty, but also enrich non-empty fields if we find better data
+        empty_fields = [col for col, value in cleaned_sample_record.items() 
+                       if not value or value.strip() == '' or value.lower() in ['nan', 'null', 'none']]
+        
+        logger.info(f"🔍 COMPOSITE SAMPLE for {filename}: {len(empty_fields)} empty fields to fill: {empty_fields}")
+        logger.info(f"🔍 Will also scan for better data in non-empty fields to create best possible sample")
+        
+        logger.info(f"🔍 SAMPLE ENRICHMENT for {filename}: Found {len(empty_fields)} empty fields to fill: {empty_fields}")
+        
+        # 🛡️ BULLETPROOF: Wrap everything in try/catch
+        try:
+            # Re-read the file with more rows for enrichment scanning
+            df_full = pd.read_csv(file_path, nrows=max_rows_to_scan, low_memory=False)
+            
+            # Apply the SAME column cleaning as before (to match the cleaned sample)
+            df_full_cleaned = df_full.dropna(axis=1, how='all')
+            for col in df_full_cleaned.columns:
+                if df_full_cleaned[col].astype(str).str.strip().eq('').all():
+                    df_full_cleaned = df_full_cleaned.drop(columns=[col])
+            
+            # Only keep columns that exist in our cleaned sample (after filtering)
+            available_columns = [col for col in cleaned_sample_record.keys() if col in df_full_cleaned.columns]
+            df_enrichment = df_full_cleaned[available_columns]
+            
+            if len(df_enrichment) <= 1:
+                logger.info(f"⚠️ Only {len(df_enrichment)} rows available for enrichment, skipping")
+                return cleaned_sample_record
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Could not re-read file for enrichment: {e} - using original sample")
+            return cleaned_sample_record
+        
+        # Start enrichment process - create BEST POSSIBLE composite sample
+        enriched_sample = cleaned_sample_record.copy()
+        rows_to_scan = min(max_rows_to_scan, len(df_enrichment))
+        filled_fields = []
+        improved_fields = []
+        
+        # Scan ALL rows to create the best composite sample
+        for row_idx in range(0, rows_to_scan):  # Start from row 0 (include first row for potential improvements)
+            try:
+                current_row = df_enrichment.iloc[row_idx].fillna('').astype(str)
+                
+                # Check EVERY field to potentially improve the sample
+                for field_name in enriched_sample.keys():
+                    if field_name not in current_row.index:
+                        continue
+                        
+                    current_value = current_row[field_name]
+                    existing_value = enriched_sample[field_name]
+                    
+                    # Skip if current row has no value
+                    if not current_value or current_value.strip() == '' or current_value.lower() in ['nan', 'null', 'none']:
+                        continue
+                    
+                    current_value = current_value.strip()
+                    
+                    # If field is empty, fill it
+                    if not existing_value or existing_value.strip() == '' or existing_value.lower() in ['nan', 'null', 'none']:
+                        enriched_sample[field_name] = current_value
+                        if field_name in empty_fields:
+                            empty_fields.remove(field_name)
+                        filled_fields.append(f"{field_name} (from row {row_idx + 1})")
+                        logger.debug(f"  ✅ Filled empty '{field_name}' with '{current_value}' from row {row_idx + 1}")
+                    
+                    # If field has value, check if current value is "better" (longer, more complete)
+                    elif len(current_value) > len(existing_value.strip()):
+                        old_value = existing_value.strip()
+                        enriched_sample[field_name] = current_value
+                        improved_fields.append(f"{field_name} ('{old_value[:20]}...' → '{current_value[:20]}...' from row {row_idx + 1})")
+                        logger.debug(f"  📈 Improved '{field_name}': '{old_value[:20]}...' → '{current_value[:20]}...' from row {row_idx + 1}")
+                        
+            except Exception as e:
+                logger.debug(f"Error processing row {row_idx}: {e}")
+                continue
+        
+        # Performance and results logging
+        elapsed_time = time.time() - start_time
+        total_changes = len(filled_fields) + len(improved_fields)
+        
+        if total_changes > 0:
+            logger.info(f"✅ COMPOSITE SAMPLE SUCCESS for {filename}: Made {total_changes} improvements in {elapsed_time:.3f}s by scanning {rows_to_scan} rows:")
+            
+            if filled_fields:
+                logger.info(f"   📝 Filled {len(filled_fields)} empty fields:")
+                for fill_info in filled_fields[:3]:  # Show first 3 filled fields
+                    logger.info(f"      • {fill_info}")
+                if len(filled_fields) > 3:
+                    logger.info(f"      • ... and {len(filled_fields) - 3} more")
+            
+            if improved_fields:
+                logger.info(f"   📈 Improved {len(improved_fields)} existing fields with better data:")
+                for improve_info in improved_fields[:3]:  # Show first 3 improved fields
+                    logger.info(f"      • {improve_info}")
+                if len(improved_fields) > 3:
+                    logger.info(f"      • ... and {len(improved_fields) - 3} more")
+        else:
+            logger.info(f"⚠️ COMPOSITE SAMPLE NO-CHANGE for {filename}: No improvements found in {rows_to_scan} rows (took {elapsed_time:.3f}s)")
+        
+        if empty_fields:
+            logger.info(f"⚠️ ENRICHMENT INCOMPLETE for {filename}: {len(empty_fields)} fields remain empty: {empty_fields[:5]}")
+        else:
+            logger.info(f"🎉 ENRICHMENT COMPLETE for {filename}: All fields filled successfully!")
+        
+        # 🛡️ CLEANUP: Memory management
+        try:
+            del df_full, df_full_cleaned, df_enrichment
+            import gc
+            gc.collect()
+        except:
+            pass  # Ignore cleanup errors
+        
+        return enriched_sample
 
     async def extract_headers_and_samples(self, file_paths: List[str]) -> List[Dict]:
         """
@@ -225,8 +364,8 @@ class N8NHeaderMapper:
                     logger.error(f"🔍 ❌ File read error: {read_error}")
                     continue
                 
-                # Read CSV with more rows to better detect empty columns
-                df = pd.read_csv(file_path, nrows=3, low_memory=False)  # MEMORY FIX: Reduced from 100 to 3 rows
+                # 🆕 ENHANCEMENT: Read more rows for better column detection (increased from 3 to 100)
+                df = pd.read_csv(file_path, nrows=100, low_memory=False)
                 original_columns = len(df.columns)
                 logger.info(f"Original CSV shape: {df.shape} (rows x columns)")
                 logger.info(f"Original headers: {list(df.columns)[:10]}...")  # First 10 headers
@@ -252,6 +391,16 @@ class N8NHeaderMapper:
                     if not cleaned_sample_record:
                         logger.warning(f"No useful columns found in {file_path} after filtering - using original record for debugging")
                         cleaned_sample_record = sample_record  # Use original record
+                    
+                    # 🆕 NEW: ENRICH the cleaned sample by filling empty fields from other rows (AFTER filtering)
+                    try:
+                        cleaned_sample_record = self._create_enriched_sample(
+                            cleaned_sample_record, file_path, max_rows_to_scan=1000
+                        )
+                        logger.info(f"✅ Sample enrichment completed for {file_path.split('/')[-1]}")
+                    except Exception as enrich_error:
+                        logger.warning(f"⚠️ Sample enrichment failed for {file_path.split('/')[-1]}: {enrich_error} - using original sample")
+                        # cleaned_sample_record stays as-is (bulletproof fallback)
                         
                 else:
                     logger.warning(f"No data rows found in {file_path}")
@@ -450,4 +599,4 @@ class N8NHeaderMapper:
             
         except Exception as e:
             logger.error(f"Webhook validation failed: {e}")
-            return False 
+            return False

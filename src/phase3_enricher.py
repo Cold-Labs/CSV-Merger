@@ -34,13 +34,43 @@ class Phase3Enricher:
             'processing_time': 0
         }
         
-        # Email domain rankings (higher number = higher priority)
-        self.personal_email_rankings = {
-            'gmail.com': 4,
-            'yahoo.com': 3,
-            'outlook.com': 2,
-            'hotmail.com': 1
-        }
+        # Load personal email domains from config with priority rankings
+        self.personal_email_rankings = self._load_personal_email_domains()
+    
+    def _load_personal_email_domains(self) -> Dict[str, int]:
+        """Load personal email domains from config with priority rankings"""
+        try:
+            # Get personal domains from config
+            field_mappings = self.config_manager.get_field_mappings()
+            personal_domains = field_mappings.get('data_cleaning_rules', {}).get('personal_email_domains', [])
+            
+            # Create rankings: Gmail > Yahoo > Outlook > Hotmail > others
+            rankings = {}
+            for domain in personal_domains:
+                domain_lower = domain.lower()
+                if 'gmail' in domain_lower:
+                    rankings[domain_lower] = 4
+                elif 'yahoo' in domain_lower:
+                    rankings[domain_lower] = 3
+                elif 'outlook' in domain_lower or 'live' in domain_lower:
+                    rankings[domain_lower] = 2
+                elif 'hotmail' in domain_lower:
+                    rankings[domain_lower] = 1
+                else:
+                    rankings[domain_lower] = 0  # Other personal domains
+            
+            logger.info(f"Loaded {len(rankings)} personal email domains from config")
+            return rankings
+            
+        except Exception as e:
+            logger.warning(f"Failed to load personal domains from config: {e}, using fallback")
+            # Fallback to hardcoded list
+            return {
+                'gmail.com': 4,
+                'yahoo.com': 3,
+                'outlook.com': 2,
+                'hotmail.com': 1
+            }
     
     def _update_progress(self, message: str, percentage: int = None, stage: str = None):
         """Update progress via callback"""
