@@ -1,11 +1,14 @@
 {
-  "$schema": "https://railway.app/railway.schema.json",
+  "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "builder": "dockerfile"
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "restartPolicyType": "always",
+    "numReplicas": 1,
+    "restartPolicyType": "ALWAYS",
     "healthcheckPath": "/health",
-    "healthcheckTimeout": 100
+    "healthcheckTimeout": 300,
+    "startCommand": "gunicorn --bind 0.0.0.0:$PORT --timeout 300 --workers 1 --worker-class sync --log-level info --access-logfile - --error-logfile - simple_app:app"
   }
 } 
