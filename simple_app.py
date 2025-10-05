@@ -56,6 +56,11 @@ def index():
     """Main page"""
     return render_template('simple_index.html')
 
+@app.route('/ping')
+def ping():
+    """Simple ping endpoint"""
+    return 'pong'
+
 @app.route('/api/upload', methods=['POST'])
 def upload_files():
     """Upload CSV files"""
@@ -500,6 +505,8 @@ def test_webhook():
 @app.route('/api/cancel/<job_id>', methods=['POST'])
 def cancel_job(job_id):
     """Cancel a running job"""
+    import json
+    
     try:
         print(f"🛑 Cancel request for job {job_id}")
         
@@ -571,18 +578,26 @@ def download_result(job_id):
 @app.route('/health')
 def health():
     """Health check"""
+    redis_status = 'unknown'
+    redis_error = None
+    
     try:
-        redis_conn.ping()
-        return jsonify({
-            'status': 'healthy',
-            'redis': 'connected',
-            'timestamp': datetime.now().isoformat()
-        })
+        # Test Redis connection
+        redis_client.ping()
+        redis_status = 'connected'
     except Exception as e:
-        return jsonify({
-            'status': 'unhealthy',
-            'error': str(e)
-        }), 500
+        redis_status = 'disconnected'
+        redis_error = str(e)
+    
+    # Always return 200 OK - app can function without Redis for basic operations
+    return jsonify({
+        'status': 'healthy',
+        'redis': redis_status,
+        'redis_error': redis_error,
+        'timestamp': datetime.now().isoformat(),
+        'app': 'CSV Merger',
+        'version': '1.0'
+    })
 
 @app.route('/api/cleanup', methods=['POST'])
 def manual_cleanup():
@@ -648,8 +663,8 @@ def start_background_cleanup():
     print("🕒 Background cleanup scheduled (runs every hour)")
 
 if __name__ == '__main__':
-    # Get port from environment (Railway sets this)
-    port = int(os.getenv('PORT', 8000))
+    # Get port from environment (Railway sets this) - use 5002 as default per memory
+    port = int(os.getenv('PORT', 5002))
     debug = os.getenv('FLASK_ENV') != 'production'
     
     print("🚀 Starting CSV Merger (Simplified)")

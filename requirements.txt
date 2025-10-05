@@ -1,9 +1,8 @@
 # Web framework
 Flask>=3.0.0
-Flask-SocketIO>=5.3.6
 
 # Production server
-eventlet>=0.33.0
+gunicorn>=21.2.0
 
 # Data processing
 pandas>=2.2.0
@@ -18,7 +17,6 @@ psutil>=5.9.0
 requests>=2.31.0
 aiohttp>=3.9.0
 python-dotenv>=1.0.0
-gunicorn>=21.2.0
 redis>=5.0.0
 rq>=1.15.0
 

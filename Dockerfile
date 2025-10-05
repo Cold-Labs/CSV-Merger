@@ -31,4 +31,4 @@ ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
 
 # Command to run the application
-CMD gunicorn --bind 0.0.0.0:$PORT --timeout 300 --workers 1 --worker-class eventlet simple_app:app 
+CMD gunicorn --bind 0.0.0.0:$PORT --timeout 300 --workers 1 --worker-class sync --max-requests 1000 --max-requests-jitter 100 simple_app:app 
