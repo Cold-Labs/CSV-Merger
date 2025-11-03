@@ -156,6 +156,31 @@ CSV providers often use underscores instead of spaces in column names (e.g., `li
 
 ---
 
+## [Date: 2025-11-03 - Bug Fix #6] LinkedIn Fields Filtered Out Before AI Mapping
+
+### Changed: src/header_mapper.py (lines 139-145)
+**Type:** Bug Fix - Critical
+**Description:** Prevent LinkedIn and social media fields from being filtered out when empty
+**Reason:** The header mapper filters out columns with empty values UNLESS they're in the "important_fields" list. LinkedIn, Twitter, Instagram, etc. weren't in this list, so if the first sample row had empty social media fields, they'd be completely filtered out before n8n AI mapping, making it impossible to map them even when we added them to field_mappings.json
+**Solution:** Add social media field terms ('linkedin', 'twitter', 'facebook', 'instagram', 'youtube', 'tiktok') to the important_fields whitelist
+**Impact:**
+  - Affects: Sample data sent to n8n for AI mapping
+  - Social media fields now preserved even if empty in sample row
+  - n8n AI can now see and map linkedin_url → Company LinkedIn
+  - Ensures ALL important fields are visible to AI mapper
+**Risk Level:** Low (additive whitelist entry)
+**Status:** ✅ APPLIED
+
+**Root Cause Chain:**
+1. Store Leads CSV row 1 has empty `linkedin_url`
+2. Header mapper filters it out (not in important_fields)
+3. n8n never sees the field, can't create mapping
+4. Field ends up in additional_fields instead of Company LinkedIn
+
+**Now:** LinkedIn fields preserved → n8n sees them → maps to Company LinkedIn ✅
+
+---
+
 ## Instructions for Future Changes
 
 Every time you modify code:

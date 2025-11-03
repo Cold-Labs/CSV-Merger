@@ -141,7 +141,8 @@ class N8NHeaderMapper:
                 'email', 'e-mail', 'mail',  # email fields
                 'phone', 'telephone', 'mobile', 'cell',  # phone fields  
                 'name', 'title', 'position', 'role',  # key identity fields
-                'company', 'organization', 'domain', 'website'  # company fields
+                'company', 'organization', 'domain', 'website',  # company fields
+                'linkedin', 'twitter', 'facebook', 'instagram', 'youtube', 'tiktok'  # social media fields
             ]
             if not any(term in column_lower for term in important_fields):
                 return True
