@@ -206,6 +206,41 @@ class Phase2Standardizer:
             if mapped_values.notna().any():
                 self.stats['headers_mapped'] += 1
         
+        # ============================================================
+        # PRESERVE UNMAPPED COLUMNS (Bug Fix #3)
+        # ============================================================
+        # Collect all original columns that were used in mappings
+        mapped_original_columns = set()
+        for standard_header, mapping_data in all_mappings.items():
+            if isinstance(mapping_data, dict):
+                # Extract original column names from all priority levels
+                if 'primary' in mapping_data and mapping_data['primary']:
+                    mapped_original_columns.add(mapping_data['primary'])
+                if 'secondary' in mapping_data:
+                    for col in mapping_data['secondary']:
+                        if col:
+                            mapped_original_columns.add(col)
+                if 'tertiary' in mapping_data:
+                    for col in mapping_data['tertiary']:
+                        if col:
+                            mapped_original_columns.add(col)
+        
+        # Add Source to mapped columns (we don't want to duplicate it)
+        mapped_original_columns.add('Source')
+        
+        # Find unmapped columns from original data
+        unmapped_columns = [col for col in merged_df.columns if col not in mapped_original_columns]
+        
+        # Add all unmapped columns to the standardized dataframe
+        unmapped_count = 0
+        for col in unmapped_columns:
+            standardized_df[col] = merged_df[col]
+            unmapped_count += 1
+        
+        self.stats['unmapped_headers'] = unmapped_count
+        
+        logger.info(f"📦 Preserved {unmapped_count} unmapped columns: {unmapped_columns[:10]}{'...' if len(unmapped_columns) > 10 else ''}")
+        
         # Update stats
         self.stats['processing_time'] = (datetime.now() - start_time).total_seconds()
         
@@ -214,6 +249,7 @@ class Phase2Standardizer:
         logger.info(f"   • Primary mappings: {self.stats['primary_mappings']}")
         logger.info(f"   • Secondary mappings: {self.stats['secondary_mappings']}")
         logger.info(f"   • Tertiary mappings: {self.stats['tertiary_mappings']}")
+        logger.info(f"   • Unmapped headers preserved: {self.stats['unmapped_headers']}")
         logger.info(f"   • Processing time: {self.stats['processing_time']:.2f}s")
         
         return standardized_df
