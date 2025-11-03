@@ -66,7 +66,9 @@ class Phase1Merger:
                 logger.info(f"Reading file: {os.path.basename(file_path)}")
                 
                 # Read CSV file with error handling
-                df = pd.read_csv(file_path, encoding='utf-8', low_memory=False)
+                # parse_dates=False prevents pandas from auto-converting text fields like "Job Title" to dates
+                # Numeric fields stay numeric, text stays text, dates stay as strings (can be parsed explicitly if needed)
+                df = pd.read_csv(file_path, encoding='utf-8', low_memory=False, parse_dates=False)
                 
                 # Add source tracking
                 source_name = os.path.basename(file_path)

@@ -5,10 +5,17 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
+    "runtime": "V2",
     "numReplicas": 1,
-    "restartPolicyType": "ALWAYS",
     "healthcheckPath": "/health",
-    "healthcheckTimeout": 300,
-    "startCommand": "gunicorn --bind 0.0.0.0:$PORT --timeout 300 --workers 1 --worker-class sync --log-level info --access-logfile - --error-logfile - simple_app:app"
+    "sleepApplication": false,
+    "useLegacyStacker": false,
+    "multiRegionConfig": {
+      "europe-west4-drams3a": {
+        "numReplicas": 1
+      }
+    },
+    "restartPolicyType": "ALWAYS",
+    "healthcheckTimeout": 100
   }
-} 
+}

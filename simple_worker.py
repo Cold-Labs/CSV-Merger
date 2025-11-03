@@ -374,21 +374,30 @@ class WebhookSender:
                 
                 metadata_fields = {'Source'}
                 
+                # Get all standard fields (union of person, company, and metadata fields)
+                all_standard_fields = person_fields | company_fields | metadata_fields
+                
+                # Extract additional fields (all fields NOT in the standard categories)
+                additional_fields = {k: v for k, v in clean_record.items() 
+                                   if k not in all_standard_fields and v is not None and v != ''}
+                
                 # Create payload based on table_type
                 if table_type == 'company':
-                    # Company webhooks: Only include company fields + metadata
+                    # Company webhooks: Include company fields + metadata + ALL additional fields
                     payload = {
                         **{k: v for k, v in clean_record.items() 
                            if k in company_fields or k in metadata_fields},
+                        'additional_fields': additional_fields,  # Include ALL unmapped fields
                         '_metadata': {
                             'record_number': record_num,
                             'timestamp': time.time(),
-                            'source': 'CSV Merger'
+                            'source': 'CSV Merger',
+                            'total_additional_fields': len(additional_fields)
                         }
                     }
                     
                 elif table_type == 'people':
-                    # People webhooks: Nested structure with person and company objects
+                    # People webhooks: Nested structure with person and company objects + ALL additional fields
                     person_data = {k: v for k, v in clean_record.items() if k in person_fields}
                     company_data = {k: v for k, v in clean_record.items() if k in company_fields}
                     
@@ -396,10 +405,12 @@ class WebhookSender:
                         'person': person_data,
                         'company': company_data,
                         **{k: v for k, v in clean_record.items() if k in metadata_fields},
+                        'additional_fields': additional_fields,  # Include ALL unmapped fields
                         '_metadata': {
                             'record_number': record_num,
                             'timestamp': time.time(),
-                            'source': 'CSV Merger'
+                            'source': 'CSV Merger',
+                            'total_additional_fields': len(additional_fields)
                         }
                     }
                 else:

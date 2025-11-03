@@ -53,3 +53,41 @@ This is a CSV processing application for cold email agencies that merges, dedupl
 - All session-based features must include session isolation
 - Configuration should be easily editable in JSON files
 - Always implement both webhook AND download options
+
+## CRITICAL: Change Management & Documentation
+**MANDATORY REQUIREMENT - DO NOT SKIP:**
+
+### Every Code Change Must Be Logged
+Before making ANY code changes, you MUST:
+
+1. **Update CHANGELOG.md** with:
+   - Date and time of change
+   - File(s) modified
+   - Brief description of what was changed
+   - Reason for the change (bug fix, feature, optimization, etc.)
+   - Potential impact areas
+
+2. **Format for CHANGELOG.md entries:**
+```
+## [Date: YYYY-MM-DD HH:MM]
+
+### Changed: [File Path(s)]
+**Type:** [Bug Fix | Feature | Optimization | Refactor]
+**Description:** Brief description of changes
+**Reason:** Why this change was needed
+**Impact:** What parts of the system are affected
+**Risk Level:** [Low | Medium | High]
+
+---
+```
+
+3. **Before Committing:**
+   - Review all changed files
+   - Verify CHANGELOG.md is updated
+   - Check that no unintended changes are included
+
+### Why This Matters
+- Prevents accidental breaking changes
+- Creates audit trail for debugging
+- Helps understand system evolution
+- Makes rollbacks easier if needed
