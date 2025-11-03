@@ -140,6 +140,22 @@ CSV providers often use underscores instead of spaces in column names (e.g., `li
 
 ---
 
+## [Date: 2025-11-03 - Bug Fix #5] Unhashable Type Error in Phase 2
+
+### Changed: src/phase2_standardizer.py (lines 209-238)
+**Type:** Bug Fix - Critical
+**Description:** Fix "unhashable type: 'list'" error when collecting mapped columns
+**Reason:** The code was trying to add lists to a set, which isn't allowed in Python. The mapping_data structure can contain lists or strings in secondary/tertiary fields, and we need to handle both cases.
+**Solution:** Add type checking to safely handle both strings and lists when collecting mapped columns
+**Impact:**
+  - Affects: Phase 2 unmapped column preservation logic
+  - Fixes crash during CSV processing
+  - Now properly handles mapping data regardless of whether values are strings or lists
+**Risk Level:** Low (defensive type checking)
+**Status:** ✅ APPLIED
+
+---
+
 ## Instructions for Future Changes
 
 Every time you modify code:

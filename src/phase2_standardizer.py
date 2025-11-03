@@ -215,15 +215,29 @@ class Phase2Standardizer:
             if isinstance(mapping_data, dict):
                 # Extract original column names from all priority levels
                 if 'primary' in mapping_data and mapping_data['primary']:
-                    mapped_original_columns.add(mapping_data['primary'])
+                    # Primary is always a string
+                    if isinstance(mapping_data['primary'], str):
+                        mapped_original_columns.add(mapping_data['primary'])
+                        
                 if 'secondary' in mapping_data:
-                    for col in mapping_data['secondary']:
-                        if col:
-                            mapped_original_columns.add(col)
+                    # Secondary might be a list or string
+                    secondary = mapping_data['secondary']
+                    if isinstance(secondary, list):
+                        for col in secondary:
+                            if col and isinstance(col, str):
+                                mapped_original_columns.add(col)
+                    elif isinstance(secondary, str) and secondary:
+                        mapped_original_columns.add(secondary)
+                        
                 if 'tertiary' in mapping_data:
-                    for col in mapping_data['tertiary']:
-                        if col:
-                            mapped_original_columns.add(col)
+                    # Tertiary might be a list or string
+                    tertiary = mapping_data['tertiary']
+                    if isinstance(tertiary, list):
+                        for col in tertiary:
+                            if col and isinstance(col, str):
+                                mapped_original_columns.add(col)
+                    elif isinstance(tertiary, str) and tertiary:
+                        mapped_original_columns.add(tertiary)
         
         # Add Source to mapped columns (we don't want to duplicate it)
         mapped_original_columns.add('Source')
