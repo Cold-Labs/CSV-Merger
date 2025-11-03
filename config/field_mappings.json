@@ -6,7 +6,7 @@
     "Company Industry": ["industry", "sector", "business type", "category", "vertical", "field", "company industry"],
     "Company Employee Count": ["employees", "employee count", "employee_count", "staff size", "staff_size", "team size", "team_size", "headcount", "company size", "company_size"],
     "Company LinkedIn": ["linkedin", "linkedin url", "linkedin_url", "company linkedin", "linkedin page", "li url", "linkedin_account", "linkedin account"],
-    "Year Founded": ["founded", "year founded", "established", "inception", "started", "founding year"],
+    "Year Founded": ["founded", "year founded", "established", "inception", "founding year"],
     "Company Location": ["location", "address", "city", "headquarters", "hq", "company location"]
   },
   "people_mappings": {
