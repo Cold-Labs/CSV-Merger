@@ -252,6 +252,59 @@ CSV providers often use underscores instead of spaces in column names (e.g., `li
 
 ---
 
+## [Date: 2025-11-04 - Bug #9] Standard Fields NULL, Data in additional_fields - TYPE MISMATCH
+
+### Changed: src/phase2_standardizer.py (lines 264-280)
+**Type:** Bug Fix - CATASTROPHIC
+**Description:** Fix type mismatch causing ALL mapped source columns to be incorrectly preserved as unmapped
+**Reason:** 
+- `_extract_all_mappings` creates: `{"primary": ["first_name"]}` (LIST)
+- Unmapped detection checked: `isinstance(primary, str)` ❌ ALWAYS FALSE!
+- Result: Source columns NEVER added to `mapped_original_columns`
+- ALL mapped columns preserved as "unmapped"
+- Standard fields exist but NULL
+- Data stuck in additional_fields
+
+**Solution:** Loop through priority lists correctly to extract source column names
+
+**Impact:**
+- Affects: Unmapped column preservation
+- FIXES: First Name, Last Name, Full Name, Job Title all showing NULL
+- FIXES: Data appearing in additional_fields instead of main objects
+- FIXES: Duplicate columns (standard + source both present)
+**Risk Level:** HIGH (was breaking ALL field mappings)
+**Status:** ✅ APPLIED
+
+**The Disaster:**
+```json
+{
+  "person": {
+    "First Name": null,  ❌
+    "Last Name": null,   ❌
+    "Job Title": null    ❌
+  },
+  "additional_fields": {
+    "first_name": "Abigail",      ❌ Should be in First Name!
+    "last_name": "Swanson",       ❌ Should be in Last Name!
+    "current_title": "Marketing Director"  ❌ Should be in Job Title!
+  }
+}
+```
+
+**Now Fixed:**
+```json
+{
+  "person": {
+    "First Name": "Abigail",  ✅
+    "Last Name": "Swanson",   ✅
+    "Job Title": "Marketing Director"  ✅
+  },
+  "additional_fields": {}  ✅ Only truly unmapped stuff
+}
+```
+
+---
+
 ## Instructions for Future Changes
 
 Every time you modify code:
