@@ -258,6 +258,12 @@ class Phase2Standardizer:
         # Update stats
         self.stats['processing_time'] = (datetime.now() - start_time).total_seconds()
         
+        # ============================================================
+        # CONSOLIDATE SIMILAR FIELDS (Bug Fix #7)
+        # ============================================================
+        # Merge variant field names created by inconsistent AI mapping
+        standardized_df = self._consolidate_variant_fields(standardized_df, table_type)
+        
         logger.info(f"✅ PHASE 2 COMPLETE:")
         logger.info(f"   • Headers mapped: {self.stats['headers_mapped']}")
         logger.info(f"   • Primary mappings: {self.stats['primary_mappings']}")
@@ -395,6 +401,76 @@ class Phase2Standardizer:
                 standardized_df[header] = ''
         
         return standardized_df
+    
+    def _consolidate_variant_fields(self, df: pd.DataFrame, table_type: str) -> pd.DataFrame:
+        """
+        Consolidate field variants created by inconsistent AI mapping.
+        E.g., merge "LinkedIn Profile", "Linkedin Url", "Company LinkedIn Url" into "Company LinkedIn"
+        """
+        logger.info("🔄 Consolidating field variants to prevent data scattering...")
+        
+        # Define consolidation rules: target_field -> [variant_names_to_merge]
+        if table_type == 'company':
+            consolidation_rules = {
+                'Company LinkedIn': [
+                    'LinkedIn Profile', 'Linkedin Profile', 'LinkedIn Url', 'Linkedin Url',
+                    'Company LinkedIn Url', 'Company Linkedin Url', 'LinkedIn URL', 
+                    'Company Linked In', 'Linked In', 'LinkedIn', 'linkedin_url',
+                    'LinkedIn Account', 'Linkedin Account', 'LinkedIn Username', 'linkedin_account'
+                ],
+                'Company Domain': [
+                    'Domain', 'Website', 'Company Website', 'domain_url', 'Final Domain'
+                ],
+                'Company Name': [
+                    'merchant_name', 'Merchant Name', 'Name', 'Business Name'
+                ],
+                'Company Employee Count': [
+                    'employee_count', 'Employee Count', 'Employees', 'Staff Size'
+                ]
+            }
+        else:  # people
+            consolidation_rules = {
+                'LinkedIn Profile': [
+                    'LinkedIn Url', 'Linkedin Url', 'LinkedIn URL', 'LinkedIn', 
+                    'Linked In Profile', 'LinkedIn Profile Url', 'linkedin_url'
+                ],
+                'Company LinkedIn': [
+                    'Company LinkedIn Url', 'Company Linkedin Url', 'Company Linked In',
+                    'linkedin_url', 'linkedin_account'
+                ]
+            }
+        
+        consolidated_count = 0
+        
+        for target_field, variant_names in consolidation_rules.items():
+            # Find which variants exist in the dataframe
+            existing_variants = [v for v in variant_names if v in df.columns]
+            
+            if not existing_variants:
+                continue
+                
+            # Ensure target field exists
+            if target_field not in df.columns:
+                df[target_field] = ''
+            
+            # Merge data from all variants into target field
+            for variant in existing_variants:
+                # Fill empty values in target field with values from variant
+                mask = (df[target_field].fillna('').astype(str).str.strip() == '')
+                variant_values = df[variant].fillna('').astype(str)
+                has_value = (variant_values.str.strip() != '') & (variant_values.str.lower() != 'nan')
+                
+                if (mask & has_value).any():
+                    df.loc[mask & has_value, target_field] = variant_values.loc[mask & has_value]
+                    consolidated_count += (mask & has_value).sum()
+                    logger.info(f"   ✓ Merged {(mask & has_value).sum()} values from '{variant}' into '{target_field}'")
+                
+                # Remove the variant column to prevent duplication
+                if variant != target_field:
+                    df = df.drop(columns=[variant])
+        
+        logger.info(f"📦 Consolidated {consolidated_count} values across variant fields")
+        return df
     
     def get_stats(self) -> Dict[str, Any]:
         """Get processing statistics"""

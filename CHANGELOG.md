@@ -181,6 +181,33 @@ CSV providers often use underscores instead of spaces in column names (e.g., `li
 
 ---
 
+## [Date: 2025-11-03 - Bug Fix #7] LinkedIn Data Scattered Across Multiple Fields
+
+### Changed: src/phase2_standardizer.py (lines 261-473)
+**Type:** Bug Fix - CRITICAL
+**Description:** Add field consolidation to merge variant field names created by inconsistent AI mapping
+**Reason:** n8n AI was creating different field names for the same data (e.g., "LinkedIn Profile", "Linkedin Url", "Company LinkedIn Url", "LinkedIn Username") causing LinkedIn data to scatter across multiple columns in Clay instead of being in ONE consistent field
+**Solution:** Added `_consolidate_variant_fields()` method that runs after AI mapping to merge all variant names into the correct standard field
+**Impact:**
+  - Affects: Final standardized DataFrame before webhook sending
+  - Merges all LinkedIn variants → "Company LinkedIn" (for companies)
+  - Merges all LinkedIn variants → "LinkedIn Profile" (for people)
+  - Also consolidates: Company Name, Company Domain, Employee Count variants
+  - Removes duplicate variant columns after merging data
+**Risk Level:** Medium (changes field structure, but only consolidates, doesn't lose data)
+**Status:** ✅ APPLIED
+
+**Consolidation Rules:**
+- **Company LinkedIn**: Merges "LinkedIn Profile", "Linkedin Url", "Company LinkedIn Url", "LinkedIn Username", "linkedin_url", "linkedin_account", etc.
+- **Company Domain**: Merges "Domain", "Website", "domain_url", "Final Domain"
+- **Company Name**: Merges "merchant_name", "Merchant Name", "Name"
+- **Company Employee Count**: Merges "employee_count", "Employees", "Staff Size"
+
+**Before:** LinkedIn data scattered across 5+ different fields in Clay
+**After:** ALL LinkedIn data in ONE consistent "Company LinkedIn" field ✅
+
+---
+
 ## Instructions for Future Changes
 
 Every time you modify code:
