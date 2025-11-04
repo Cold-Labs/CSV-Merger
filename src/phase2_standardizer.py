@@ -596,7 +596,8 @@ class Phase2Standardizer:
                 variant_lower = variant.lower()
                 if variant_lower in column_name_map:
                     actual_col_name = column_name_map[variant_lower]
-                    existing_variants.append(actual_col_name)
+                    if actual_col_name not in existing_variants:  # Avoid duplicates!
+                        existing_variants.append(actual_col_name)
 
             if not existing_variants:
                 continue
@@ -624,7 +625,7 @@ class Phase2Standardizer:
                     )
 
                 # Remove the variant column to prevent duplication
-                if variant != target_field:
+                if variant != target_field and variant in df.columns:
                     df = df.drop(columns=[variant])
 
         logger.info(
