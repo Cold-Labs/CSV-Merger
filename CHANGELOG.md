@@ -248,6 +248,8 @@ CSV providers often use underscores instead of spaces in column names (e.g., `li
 }
 ```
 
+**HOTFIX:** Added duplicate prevention - variant list had ["LinkedIn Profile", "Linkedin profile", "linkedin profile"] which all matched same column, causing KeyError when trying to drop it 3 times. Now checks for duplicates and verifies column exists before dropping.
+
 ---
 
 ## Instructions for Future Changes
