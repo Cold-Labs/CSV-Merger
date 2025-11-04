@@ -266,30 +266,18 @@ class Phase2Standardizer:
         for standard_header, mapping_data in all_mappings.items():
             if isinstance(mapping_data, dict):
                 # Extract original column names from all priority levels
-                if "primary" in mapping_data and mapping_data["primary"]:
-                    # Primary is always a string
-                    if isinstance(mapping_data["primary"], str):
-                        mapped_original_columns.add(mapping_data["primary"])
-
-                if "secondary" in mapping_data:
-                    # Secondary might be a list or string
-                    secondary = mapping_data["secondary"]
-                    if isinstance(secondary, list):
-                        for col in secondary:
-                            if col and isinstance(col, str):
-                                mapped_original_columns.add(col)
-                    elif isinstance(secondary, str) and secondary:
-                        mapped_original_columns.add(secondary)
-
-                if "tertiary" in mapping_data:
-                    # Tertiary might be a list or string
-                    tertiary = mapping_data["tertiary"]
-                    if isinstance(tertiary, list):
-                        for col in tertiary:
-                            if col and isinstance(col, str):
-                                mapped_original_columns.add(col)
-                    elif isinstance(tertiary, str) and tertiary:
-                        mapped_original_columns.add(tertiary)
+                # NOTE: All priorities are LISTS from _extract_all_mappings
+                for priority in ["primary", "secondary", "tertiary"]:
+                    if priority in mapping_data:
+                        priority_value = mapping_data[priority]
+                        # It's always a list from _extract_all_mappings
+                        if isinstance(priority_value, list):
+                            for col in priority_value:
+                                if col and isinstance(col, str):
+                                    mapped_original_columns.add(col)
+                        elif isinstance(priority_value, str) and priority_value:
+                            # Fallback for string (shouldn't happen but be safe)
+                            mapped_original_columns.add(priority_value)
 
         # Add Source to mapped columns (we don't want to duplicate it)
         mapped_original_columns.add("Source")
