@@ -533,6 +533,12 @@ class Phase2Standardizer:
                     "Linkedin Account",
                     "LinkedIn Username",
                     "linkedin_account",
+                    "company linkedin url",  # lowercase variants
+                    "company linkedin URL",
+                    "Linkedin profile",  # AI creates this!
+                    "linkedin profile",
+                    "company Linked In Handle",  # AI maps to Company Name!
+                    "Linked In Handle",
                 ],
                 "Company Domain": [
                     "Domain",
@@ -564,6 +570,9 @@ class Phase2Standardizer:
                     "Linked In Profile",
                     "LinkedIn Profile Url",
                     "linkedin_url",
+                    "Linkedin profile",  # AI creates this!
+                    "linkedin profile",
+                    "Linked In",  # Two words
                 ],
                 "Company LinkedIn": [
                     "Company LinkedIn Url",
@@ -577,8 +586,17 @@ class Phase2Standardizer:
         consolidated_count = 0
 
         for target_field, variant_names in consolidation_rules.items():
-            # Find which variants exist in the dataframe
-            existing_variants = [v for v in variant_names if v in df.columns]
+            # Find which variants exist in the dataframe (CASE-INSENSITIVE matching)
+            # Create a mapping of lowercase column names to actual column names
+            column_name_map = {col.lower(): col for col in df.columns}
+
+            # Find variants that match (case-insensitive)
+            existing_variants = []
+            for variant in variant_names:
+                variant_lower = variant.lower()
+                if variant_lower in column_name_map:
+                    actual_col_name = column_name_map[variant_lower]
+                    existing_variants.append(actual_col_name)
 
             if not existing_variants:
                 continue

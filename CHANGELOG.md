@@ -208,6 +208,48 @@ CSV providers often use underscores instead of spaces in column names (e.g., `li
 
 ---
 
+## [Date: 2025-11-04 - Bug Fix #8] Case-Sensitive Field Consolidation Failing
+
+### Changed: src/phase2_standardizer.py (lines 579-593, 520-576)
+**Type:** Bug Fix - CRITICAL
+**Description:** Make field consolidation case-insensitive to catch AI-created variants with different casing
+**Reason:** n8n AI was creating fields like "Linkedin profile" (lowercase 'p') instead of "LinkedIn Profile" (uppercase 'P'). The consolidation was case-sensitive, so it didn't match → data stayed in separate column → ended up in additional_fields instead of main person/company object → LinkedIn Profile field stayed NULL
+**Solution:** 
+- Made variant matching case-insensitive
+- Added more lowercase variants to catch: "linkedin profile", "company linkedin url", "Linkedin profile"
+- Added "company Linked In Handle" (which AI incorrectly maps to Company Name!)
+**Impact:**
+  - Affects: Field consolidation logic
+  - Now catches ALL casing variations: "LinkedIn", "Linkedin", "linkedin", "LINKEDIN"
+  - Fixes empty main fields with data stuck in additional_fields
+  - Fixes "Linked In" (two words with space)
+**Risk Level:** Low (more robust matching)
+**Status:** ✅ APPLIED
+
+**Example of what was broken:**
+```json
+{
+  "person": {
+    "LinkedIn Profile": null  ❌ Empty!
+  },
+  "additional_fields": {
+    "Linkedin profile": "https://linkedin.com/in/..."  ❌ Data here!
+  }
+}
+```
+
+**Now fixed:**
+```json
+{
+  "person": {
+    "LinkedIn Profile": "https://linkedin.com/in/..."  ✅
+  },
+  "additional_fields": {}  ✅
+}
+```
+
+---
+
 ## Instructions for Future Changes
 
 Every time you modify code:
