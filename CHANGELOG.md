@@ -24,16 +24,16 @@ This file tracks all code changes made to the project. Every modification must b
 
 ## [Date: 2025-11-05 - Bug #10] Multi-Email Detection and Record Duplication for Company Records
 
-### Changed: simple_worker.py (lines 299-371, 445-456)
+### Changed: simple_worker.py (lines 299-373, 523-532)
 **Type:** Feature Enhancement / Bug Fix
 **Description:** Detect multiple emails in single cells for company records and duplicate the entire record for each email
 **Reason:** Lead platforms (Store Leads, etc.) often export company data with multiple contact emails in one field (e.g., "info@example.com:support@example.com"). Each email should be sent as a separate webhook to Clay.
 **Solution:** 
-- Added "Work Email" to company_fields set (line 454) - NOTE: Personal Email removed as it's not applicable to companies
+- Added "Company Email" to company_fields set (line 532) - proper naming for company contact emails
 - Created `_expand_multi_email_records()` method to detect and split multi-email records
 - Method detects delimiters (`:`, `,`, `;`, `|`) in email fields
 - Duplicates entire company record for each email found
-- Each duplicate gets one unique email in the primary email field
+- Each duplicate gets the email in BOTH "Company Email" (standardized) AND the original field name (preserved in additional_fields)
 - Only applies to company table_type, not people (person records have clean separate email columns)
 
 **Impact:**
@@ -47,26 +47,35 @@ This file tracks all code changes made to the project. Every modification must b
 
 **Logic Details:**
 ```python
-# Example input:
+# Example input CSV row:
 {
   "Company Name": "Steeped Coffee",
   "Company Domain": "steepedcoffee.com",
-  "emails": "info@steepedcoffee.com:support@steepedcoffee.com"
+  "emails": "info@steepedcoffee.com:support@steepedcoffee.com",
+  "Company Industry": "Food & Drink"
 }
 
-# Output: 2 separate webhooks
+# Output: 2 separate webhooks sent to Clay
 # Webhook 1:
 {
   "Company Name": "Steeped Coffee",
   "Company Domain": "steepedcoffee.com",
-  "Work Email": "info@steepedcoffee.com"
+  "Company Email": "info@steepedcoffee.com",  // Standardized field
+  "Company Industry": "Food & Drink",
+  "additional_fields": {
+    "emails": "info@steepedcoffee.com"  // Original field preserved with single email
+  }
 }
 
 # Webhook 2:
 {
   "Company Name": "Steeped Coffee",
   "Company Domain": "steepedcoffee.com",
-  "Work Email": "support@steepedcoffee.com"
+  "Company Email": "support@steepedcoffee.com",  // Standardized field
+  "Company Industry": "Food & Drink",
+  "additional_fields": {
+    "emails": "support@steepedcoffee.com"  // Original field preserved with single email
+  }
 }
 ```
 
@@ -115,7 +124,7 @@ This file tracks all code changes made to the project. Every modification must b
 - Empty/null values are excluded from additional_fields
 - Only affects Clay webhooks (not n8n webhooks)
 
-**Example Payload Structure:**
+**Example Payload Structure (Previous - Bug #2-3):**
 ```json
 {
   "person": { ... standard person fields ... },

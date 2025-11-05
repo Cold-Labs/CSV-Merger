@@ -353,17 +353,19 @@ class WebhookSender:
                 for email in all_emails:
                     # Create a copy of the record
                     record_copy = record.copy()
-                    # Set the primary email field to this specific email
+                    # Add standardized "Company Email" field with this specific email
+                    record_copy["Company Email"] = email
+                    # Keep original email field(s) with the single email value
+                    # This preserves the original field name in additional_fields
                     if primary_email_field:
                         record_copy[primary_email_field] = email
-                    # Clear other email fields to avoid confusion
-                    for email_field in email_fields:
-                        if email_field != primary_email_field:
-                            record_copy[email_field] = None
                     expanded_records.append(record_copy)
             else:
-                # No multiple emails, keep record as-is
-                expanded_records.append(record)
+                # Single or no email - add to Company Email if we found one
+                record_copy = record.copy()
+                if all_emails:
+                    record_copy["Company Email"] = all_emails[0]
+                expanded_records.append(record_copy)
         
         if len(expanded_records) > len(records):
             print(f"📧 Expanded {len(records)} records to {len(expanded_records)} records (multi-email splitting)")
@@ -529,7 +531,7 @@ class WebhookSender:
                     "Company LinkedIn",
                     "Year Founded",
                     "Company Location",
-                    "Work Email",  # Added for company records with contact emails
+                    "Company Email",  # Added for company records with contact emails
                 }
 
                 metadata_fields = {"Source"}
