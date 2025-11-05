@@ -22,6 +22,59 @@ This file tracks all code changes made to the project. Every modification must b
 
 ---
 
+## [Date: 2025-11-05 - Bug #10] Multi-Email Detection and Record Duplication for Company Records
+
+### Changed: simple_worker.py (lines 299-371, 445-456)
+**Type:** Feature Enhancement / Bug Fix
+**Description:** Detect multiple emails in single cells for company records and duplicate the entire record for each email
+**Reason:** Lead platforms (Store Leads, etc.) often export company data with multiple contact emails in one field (e.g., "info@example.com:support@example.com"). Each email should be sent as a separate webhook to Clay.
+**Solution:** 
+- Added "Work Email" and "Personal Email" to company_fields set (lines 454-455)
+- Created `_expand_multi_email_records()` method to detect and split multi-email records
+- Method detects delimiters (`:`, `,`, `;`, `|`) in email fields
+- Duplicates entire company record for each email found
+- Each duplicate gets one unique email in the primary email field
+- Only applies to company table_type, not people (person records have clean separate email columns)
+
+**Impact:**
+  - Affects: Company webhook sending logic
+  - Company records with multiple emails will now generate multiple webhooks (one per email)
+  - People records are NOT affected (no changes to person processing)
+  - All other company data remains identical across duplicates
+  - Email fields now included in company_fields for proper webhook structure
+**Risk Level:** Low-Medium (changes record count sent to webhooks, but improves data quality)
+**Status:** ✅ APPLIED
+
+**Logic Details:**
+```python
+# Example input:
+{
+  "Company Name": "Steeped Coffee",
+  "Company Domain": "steepedcoffee.com",
+  "emails": "info@steepedcoffee.com:support@steepedcoffee.com"
+}
+
+# Output: 2 separate webhooks
+# Webhook 1:
+{
+  "Company Name": "Steeped Coffee",
+  "Company Domain": "steepedcoffee.com",
+  "Work Email": "info@steepedcoffee.com"
+}
+
+# Webhook 2:
+{
+  "Company Name": "Steeped Coffee",
+  "Company Domain": "steepedcoffee.com",
+  "Work Email": "support@steepedcoffee.com"
+}
+```
+
+**Supported Delimiters:** `:` (colon), `,` (comma), `;` (semicolon), `|` (pipe), whitespace
+**Email Validation:** Basic check for `@` symbol presence
+
+---
+
 ## [Date: 2025-11-03 - Bug Fix #1] Job Title Date Conversion Issue
 
 ### Changed: src/phase1_merger.py (line 69)

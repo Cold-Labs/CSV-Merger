@@ -296,6 +296,80 @@ class WebhookSender:
         self.rate_limit = rate_limit  # requests per second
         self.delay_between_requests = 1.0 / rate_limit  # seconds between requests
 
+    def _expand_multi_email_records(
+        self, records: List[Dict], table_type: str
+    ) -> List[Dict]:
+        """
+        Detect and expand records with multiple emails into separate records.
+        Only applies to company table_type.
+        
+        Args:
+            records: List of record dictionaries
+            table_type: 'company' or 'people'
+            
+        Returns:
+            Expanded list of records (one per email)
+        """
+        if table_type != "company":
+            return records  # Only process company records
+        
+        expanded_records = []
+        email_delimiters = [':', ',', ';', '|']  # Common delimiters for multiple emails
+        
+        for record in records:
+            # Look for email fields (Work Email, Personal Email, or any field with 'email' in name)
+            email_fields = [k for k in record.keys() if 'email' in k.lower()]
+            
+            # Collect all emails found across all email fields
+            all_emails = []
+            primary_email_field = None
+            
+            for email_field in email_fields:
+                email_value = record.get(email_field)
+                
+                if email_value and isinstance(email_value, str) and email_value.strip():
+                    # Check if this field contains multiple emails
+                    contains_delimiter = any(delim in email_value for delim in email_delimiters)
+                    
+                    if contains_delimiter:
+                        # Split by any of the delimiters
+                        import re
+                        split_emails = re.split(r'[;:,|\s]+', email_value)
+                        # Clean and validate each email
+                        for email in split_emails:
+                            email = email.strip()
+                            if email and '@' in email:  # Basic validation
+                                all_emails.append(email)
+                                if not primary_email_field:
+                                    primary_email_field = email_field
+                    elif '@' in email_value:  # Single email
+                        all_emails.append(email_value.strip())
+                        if not primary_email_field:
+                            primary_email_field = email_field
+            
+            # If we found multiple emails, duplicate the record for each email
+            if len(all_emails) > 1:
+                print(f"🔀 Found {len(all_emails)} emails in record, duplicating...")
+                for email in all_emails:
+                    # Create a copy of the record
+                    record_copy = record.copy()
+                    # Set the primary email field to this specific email
+                    if primary_email_field:
+                        record_copy[primary_email_field] = email
+                    # Clear other email fields to avoid confusion
+                    for email_field in email_fields:
+                        if email_field != primary_email_field:
+                            record_copy[email_field] = None
+                    expanded_records.append(record_copy)
+            else:
+                # No multiple emails, keep record as-is
+                expanded_records.append(record)
+        
+        if len(expanded_records) > len(records):
+            print(f"📧 Expanded {len(records)} records to {len(expanded_records)} records (multi-email splitting)")
+        
+        return expanded_records
+
     def send_records_batch(
         self,
         records: List[Dict],
@@ -305,6 +379,10 @@ class WebhookSender:
         max_retries: int = 3,
     ) -> tuple:
         """Send each record as an individual webhook (not batched)"""
+        
+        # Expand records with multiple emails (only for company type)
+        records = self._expand_multi_email_records(records, table_type)
+        
         success_count = 0
         failed_count = 0
         total_records = len(records)
@@ -451,6 +529,8 @@ class WebhookSender:
                     "Company LinkedIn",
                     "Year Founded",
                     "Company Location",
+                    "Work Email",  # Added for company records with contact emails
+                    "Personal Email",  # Added for company records with contact emails
                 }
 
                 metadata_fields = {"Source"}
