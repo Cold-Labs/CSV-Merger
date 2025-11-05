@@ -530,7 +530,6 @@ class WebhookSender:
                     "Year Founded",
                     "Company Location",
                     "Work Email",  # Added for company records with contact emails
-                    "Personal Email",  # Added for company records with contact emails
                 }
 
                 metadata_fields = {"Source"}

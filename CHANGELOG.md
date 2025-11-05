@@ -29,7 +29,7 @@ This file tracks all code changes made to the project. Every modification must b
 **Description:** Detect multiple emails in single cells for company records and duplicate the entire record for each email
 **Reason:** Lead platforms (Store Leads, etc.) often export company data with multiple contact emails in one field (e.g., "info@example.com:support@example.com"). Each email should be sent as a separate webhook to Clay.
 **Solution:** 
-- Added "Work Email" and "Personal Email" to company_fields set (lines 454-455)
+- Added "Work Email" to company_fields set (line 454) - NOTE: Personal Email removed as it's not applicable to companies
 - Created `_expand_multi_email_records()` method to detect and split multi-email records
 - Method detects delimiters (`:`, `,`, `;`, `|`) in email fields
 - Duplicates entire company record for each email found
