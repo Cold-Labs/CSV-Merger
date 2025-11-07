@@ -22,27 +22,28 @@ This file tracks all code changes made to the project. Every modification must b
 
 ---
 
-## [Date: 2025-11-05 - Bug #10] Multi-Email Detection and Record Duplication for Company Records
+## [Date: 2025-11-05 - Bug #10] Multi-Email Detection and Column Splitting for Company Records
 
-### Changed: simple_worker.py (lines 299-373, 523-532)
+### Changed: simple_worker.py (lines 299-359, 371-372, 511-528, 537-553)
 **Type:** Feature Enhancement / Bug Fix
-**Description:** Detect multiple emails in single cells for company records and duplicate the entire record for each email
-**Reason:** Lead platforms (Store Leads, etc.) often export company data with multiple contact emails in one field (e.g., "info@example.com:support@example.com"). Each email should be sent as a separate webhook to Clay.
+**Description:** Detect multiple emails in single cells for company records and split them into numbered columns (Company Email 1, Company Email 2, etc.)
+**Reason:** Lead platforms (Store Leads, etc.) often export company data with multiple contact emails in one field (e.g., "info@example.com:support@example.com"). Client needs each email in a separate column within the same webhook payload.
 **Solution:** 
-- Added "Company Email" to company_fields set (line 532) - proper naming for company contact emails
-- Created `_expand_multi_email_records()` method to detect and split multi-email records
+- Created `_split_emails_to_columns()` method to detect and split multi-email fields
 - Method detects delimiters (`:`, `,`, `;`, `|`) in email fields
-- Duplicates entire company record for each email found
-- Each duplicate gets the email in BOTH "Company Email" (standardized) AND the original field name (preserved in additional_fields)
+- Splits emails into numbered columns: "Company Email 1", "Company Email 2", "Company Email 3", etc.
+- Always uses numbered format, even for single emails (consistent schema)
+- Dynamically includes numbered email columns in company_fields (not in additional_fields)
 - Only applies to company table_type, not people (person records have clean separate email columns)
+- Original email field(s) are preserved in additional_fields
 
 **Impact:**
   - Affects: Company webhook sending logic
-  - Company records with multiple emails will now generate multiple webhooks (one per email)
+  - Company records with multiple emails will have numbered email columns in the same payload
   - People records are NOT affected (no changes to person processing)
-  - All other company data remains identical across duplicates
-  - Email fields now included in company_fields for proper webhook structure
-**Risk Level:** Low-Medium (changes record count sent to webhooks, but improves data quality)
+  - Numbered email fields are treated as standard company fields, not additional fields
+  - Consistent schema regardless of email count
+**Risk Level:** Low (additive feature, no breaking changes)
 **Status:** ✅ APPLIED
 
 **Logic Details:**
@@ -51,36 +52,35 @@ This file tracks all code changes made to the project. Every modification must b
 {
   "Company Name": "Steeped Coffee",
   "Company Domain": "steepedcoffee.com",
-  "emails": "info@steepedcoffee.com:support@steepedcoffee.com",
+  "emails": "info@steepedcoffee.com:support@steepedcoffee.com:sales@steepedcoffee.com",
   "Company Industry": "Food & Drink"
 }
 
-# Output: 2 separate webhooks sent to Clay
-# Webhook 1:
+# Output: Single webhook with numbered email columns
 {
   "Company Name": "Steeped Coffee",
   "Company Domain": "steepedcoffee.com",
-  "Company Email": "info@steepedcoffee.com",  // Standardized field
+  "Company Email 1": "info@steepedcoffee.com",      // Numbered column
+  "Company Email 2": "support@steepedcoffee.com",   // Numbered column
+  "Company Email 3": "sales@steepedcoffee.com",     // Numbered column
   "Company Industry": "Food & Drink",
   "additional_fields": {
-    "emails": "info@steepedcoffee.com"  // Original field preserved with single email
+    "emails": "info@steepedcoffee.com:support@steepedcoffee.com:sales@steepedcoffee.com"  // Original preserved
   }
 }
 
-# Webhook 2:
+# Single email example (still numbered for consistency):
 {
-  "Company Name": "Steeped Coffee",
-  "Company Domain": "steepedcoffee.com",
-  "Company Email": "support@steepedcoffee.com",  // Standardized field
-  "Company Industry": "Food & Drink",
-  "additional_fields": {
-    "emails": "support@steepedcoffee.com"  // Original field preserved with single email
-  }
+  "Company Name": "Example Co",
+  "Company Domain": "example.com",
+  "Company Email 1": "contact@example.com",  // Always numbered, even if only one
+  "Company Industry": "Technology"
 }
 ```
 
 **Supported Delimiters:** `:` (colon), `,` (comma), `;` (semicolon), `|` (pipe), whitespace
 **Email Validation:** Basic check for `@` symbol presence
+**Deduplication:** Automatically removes duplicate emails within same record
 
 ---
 

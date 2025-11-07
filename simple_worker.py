@@ -296,11 +296,11 @@ class WebhookSender:
         self.rate_limit = rate_limit  # requests per second
         self.delay_between_requests = 1.0 / rate_limit  # seconds between requests
 
-    def _expand_multi_email_records(
+    def _split_emails_to_columns(
         self, records: List[Dict], table_type: str
     ) -> List[Dict]:
         """
-        Detect and expand records with multiple emails into separate records.
+        Split multiple emails in a single field into numbered columns (Company Email 1, Company Email 2, etc.).
         Only applies to company table_type.
         
         Args:
@@ -308,21 +308,22 @@ class WebhookSender:
             table_type: 'company' or 'people'
             
         Returns:
-            Expanded list of records (one per email)
+            List of records with emails split into numbered columns
         """
         if table_type != "company":
             return records  # Only process company records
         
-        expanded_records = []
+        processed_records = []
         email_delimiters = [':', ',', ';', '|']  # Common delimiters for multiple emails
         
         for record in records:
-            # Look for email fields (Work Email, Personal Email, or any field with 'email' in name)
+            record_copy = record.copy()
+            
+            # Look for email fields (any field with 'email' in name)
             email_fields = [k for k in record.keys() if 'email' in k.lower()]
             
-            # Collect all emails found across all email fields
+            # Collect all unique emails found across all email fields
             all_emails = []
-            primary_email_field = None
             
             for email_field in email_fields:
                 email_value = record.get(email_field)
@@ -338,39 +339,24 @@ class WebhookSender:
                         # Clean and validate each email
                         for email in split_emails:
                             email = email.strip()
-                            if email and '@' in email:  # Basic validation
+                            if email and '@' in email and email not in all_emails:  # Basic validation + dedup
                                 all_emails.append(email)
-                                if not primary_email_field:
-                                    primary_email_field = email_field
                     elif '@' in email_value:  # Single email
-                        all_emails.append(email_value.strip())
-                        if not primary_email_field:
-                            primary_email_field = email_field
+                        clean_email = email_value.strip()
+                        if clean_email not in all_emails:
+                            all_emails.append(clean_email)
             
-            # If we found multiple emails, duplicate the record for each email
-            if len(all_emails) > 1:
-                print(f"🔀 Found {len(all_emails)} emails in record, duplicating...")
-                for email in all_emails:
-                    # Create a copy of the record
-                    record_copy = record.copy()
-                    # Add standardized "Company Email" field with this specific email
-                    record_copy["Company Email"] = email
-                    # Keep original email field(s) with the single email value
-                    # This preserves the original field name in additional_fields
-                    if primary_email_field:
-                        record_copy[primary_email_field] = email
-                    expanded_records.append(record_copy)
-            else:
-                # Single or no email - add to Company Email if we found one
-                record_copy = record.copy()
-                if all_emails:
-                    record_copy["Company Email"] = all_emails[0]
-                expanded_records.append(record_copy)
+            # Add numbered email columns
+            if all_emails:
+                for idx, email in enumerate(all_emails, start=1):
+                    record_copy[f"Company Email {idx}"] = email
+                
+                if len(all_emails) > 1:
+                    print(f"📧 Split {len(all_emails)} emails into separate columns for record")
+            
+            processed_records.append(record_copy)
         
-        if len(expanded_records) > len(records):
-            print(f"📧 Expanded {len(records)} records to {len(expanded_records)} records (multi-email splitting)")
-        
-        return expanded_records
+        return processed_records
 
     def send_records_batch(
         self,
@@ -382,8 +368,8 @@ class WebhookSender:
     ) -> tuple:
         """Send each record as an individual webhook (not batched)"""
         
-        # Expand records with multiple emails (only for company type)
-        records = self._expand_multi_email_records(records, table_type)
+        # Split multiple emails into numbered columns (only for company type)
+        records = self._split_emails_to_columns(records, table_type)
         
         success_count = 0
         failed_count = 0
@@ -531,13 +517,15 @@ class WebhookSender:
                     "Company LinkedIn",
                     "Year Founded",
                     "Company Location",
-                    "Company Email",  # Added for company records with contact emails
                 }
 
                 metadata_fields = {"Source"}
+                
+                # Dynamically detect numbered company email fields (Company Email 1, Company Email 2, etc.)
+                company_email_fields = {k for k in clean_record.keys() if k.startswith("Company Email ")}
 
-                # Get all standard fields (union of person, company, and metadata fields)
-                all_standard_fields = person_fields | company_fields | metadata_fields
+                # Get all standard fields (union of person, company, metadata, and dynamic email fields)
+                all_standard_fields = person_fields | company_fields | metadata_fields | company_email_fields
 
                 # Extract additional fields (all fields NOT in the standard categories)
                 additional_fields = {
@@ -548,12 +536,12 @@ class WebhookSender:
 
                 # Create payload based on table_type
                 if table_type == "company":
-                    # Company webhooks: Include company fields + metadata + ALL additional fields
+                    # Company webhooks: Include company fields + numbered email fields + metadata + ALL additional fields
                     payload = {
                         **{
                             k: v
                             for k, v in clean_record.items()
-                            if k in company_fields or k in metadata_fields
+                            if k in company_fields or k in metadata_fields or k in company_email_fields
                         },
                         "additional_fields": additional_fields,  # Include ALL unmapped fields
                         "_metadata": {
