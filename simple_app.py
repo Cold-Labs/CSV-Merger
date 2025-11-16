@@ -166,7 +166,7 @@ def process_files():
         )  # 'download' or 'webhook'
         webhook_url = data.get("webhook_url")
         table_type = data.get("table_type", "companies")
-        rate_limit = data.get("rate_limit", 5)  # requests per second
+        rate_limit = data.get("rate_limit", 20)  # requests per second (default: 20 for better performance)
         record_limit = data.get("record_limit")  # limit for testing
 
         if not job_id:
@@ -305,18 +305,18 @@ def process_files():
                     except Exception as e:
                         print(f"⚠️ Redis update failed: {e}")
 
-                    # Send webhooks directly in main process (no RQ worker)
+                    # Enqueue webhook sending to RQ worker (parallel processing)
                     from simple_worker import send_processed_data_webhook_sync
 
-                    # Mark download ready but keep processing for webhook sending
+                    # Mark download ready and enqueue webhook job
                     job_status[job_id].update(
                         {
                             "status": "processing",
                             "progress": 80,
-                            "message": "Starting webhook delivery...",
+                            "message": "Queuing webhook delivery to worker...",
                             "result_path": result_path,
                             "download_ready": True,
-                            "webhook_status": "sending",
+                            "webhook_status": "queued",
                             "can_cancel": True,
                         }
                     )
@@ -331,75 +331,57 @@ def process_files():
                     except Exception as e:
                         print(f"⚠️ Redis update failed: {e}")
 
-                    # Start webhooks in background thread - DON'T WAIT
-                    import threading
-
-                    def send_webhooks_background():
-                        """Send webhooks in background thread"""
+                    # Enqueue webhook job to RQ worker (non-blocking)
+                    print(f"📤 Enqueuing webhook job for {job_id} to RQ worker...")
+                    
+                    try:
+                        rq_job = job_queue.enqueue(
+                            send_processed_data_webhook_sync,
+                            app_job_id=job_id,
+                            result_path=result_path,
+                            webhook_url=webhook_url,
+                            rate_limit=rate_limit,
+                            record_limit=record_limit,
+                            table_type=table_type,
+                            job_timeout='2h',  # Allow 2 hours for large jobs
+                            result_ttl=86400,  # Keep result for 24 hours
+                        )
+                        
+                        print(f"✅ Webhook job enqueued with ID: {rq_job.id}")
+                        
+                        # Update job status with RQ job ID
+                        job_status[job_id].update({
+                            "webhook_status": "queued",
+                            "rq_job_id": rq_job.id,
+                            "message": "Webhook job queued - worker will process in parallel"
+                        })
+                        
                         try:
-                            print(
-                                f"🚀 Starting background webhook sending for job {job_id}"
+                            redis_client.hset(
+                                f"job_status:{job_id}",
+                                mapping={
+                                    "data": json.dumps(job_status[job_id], default=str)
+                                },
                             )
-                            success_count, failed_count = (
-                                send_processed_data_webhook_sync(
-                                    app_job_id=job_id,
-                                    result_path=result_path,
-                                    webhook_url=webhook_url,
-                                    rate_limit=rate_limit,
-                                    record_limit=record_limit,
-                                    table_type=table_type,
-                                )
-                            )
-
-                            # Update final status when done
-                            job_status[job_id].update(
-                                {
-                                    "status": "completed",
-                                    "progress": 100,
-                                    "message": f"Completed! Download ready. Webhooks: {success_count} sent, {failed_count} failed",
-                                    "webhook_status": "completed",
-                                    "webhook_success_count": success_count,
-                                    "webhook_failed_count": failed_count,
-                                    "completed_at": datetime.now().isoformat(),
-                                    "can_cancel": False,
-                                }
-                            )
-
-                            try:
-                                redis_client.hset(
-                                    f"job_status:{job_id}",
-                                    mapping={
-                                        "data": json.dumps(
-                                            job_status[job_id], default=str
-                                        )
-                                    },
-                                )
-                            except Exception as e:
-                                print(f"⚠️ Final Redis update failed: {e}")
-
                         except Exception as e:
-                            print(f"❌ Background webhook error: {e}")
-                            job_status[job_id].update(
-                                {
-                                    "status": "completed",
-                                    "progress": 100,
-                                    "message": f"Processing completed but webhook failed: {str(e)}",
-                                    "webhook_status": "failed",
-                                    "can_cancel": False,
-                                }
-                            )
+                            print(f"⚠️ Redis update failed: {e}")
+                    
+                    except Exception as enqueue_error:
+                        print(f"❌ Failed to enqueue webhook job: {enqueue_error}")
+                        job_status[job_id].update({
+                            "status": "completed",
+                            "progress": 100,
+                            "message": f"Processing completed but webhook queueing failed: {str(enqueue_error)}",
+                            "webhook_status": "failed",
+                            "can_cancel": False,
+                        })
 
-                    # Start background thread
-                    webhook_thread = threading.Thread(target=send_webhooks_background)
-                    webhook_thread.daemon = True
-                    webhook_thread.start()
-
-                    # Return immediately - frontend can poll for progress
+                    # Return immediately - RQ worker will process webhooks in parallel
                     return jsonify(
                         {
                             "success": True,
                             "job_id": job_id,
-                            "message": "Processing complete! Webhook delivery started in background.",
+                            "message": "Processing complete! Webhook delivery queued to worker.",
                             "status": job_status[job_id],
                             "download_ready": True,
                         }
