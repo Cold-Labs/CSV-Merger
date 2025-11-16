@@ -40,7 +40,7 @@ def send_processed_data_webhook_sync(
     app_job_id=None,
     result_path=None,
     webhook_url=None,
-    rate_limit=20,
+    rate_limit=10,
     record_limit=None,
     table_type=None,
 ):
@@ -290,7 +290,7 @@ def update_job_status_with_time(
 class WebhookSender:
     """Handles webhook delivery with retry logic and rate limiting"""
 
-    def __init__(self, webhook_url: str, rate_limit: int = 20):
+    def __init__(self, webhook_url: str, rate_limit: int = 10):
         self.webhook_url = webhook_url
         self.config = Config()
         self.rate_limit = rate_limit  # requests per second

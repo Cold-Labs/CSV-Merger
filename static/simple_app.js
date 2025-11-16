@@ -259,7 +259,7 @@ async function processFiles(mode) {
                 processing_mode: mode,
                 webhook_url: webhookUrl,
                 table_type: tableType,
-                rate_limit: parseInt(document.getElementById('rateLimit').value) || 20,
+                rate_limit: parseInt(document.getElementById('rateLimit').value) || 10,
                 record_limit: parseInt(document.getElementById('recordLimit').value) || null
             })
         });

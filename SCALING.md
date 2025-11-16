@@ -14,8 +14,8 @@ The CSV Merger now uses a **multi-worker architecture** with RQ (Redis Queue) to
 - **Scalability:** None - single threaded
 
 ### After (Parallel Processing with RQ Workers)
-- **Rate:** 20 req/sec (default, configurable)
-- **10,000 leads:** ~8 minutes (with 2 workers)
+- **Rate:** 10 req/sec (Clay's sustained limit, configurable)
+- **10,000 leads:** ~8-16 minutes (with 2 workers)
 - **Non-blocking:** Flask app remains responsive
 - **Scalability:** Horizontal - add more workers for faster processing
 
@@ -137,38 +137,50 @@ wait
 
 ### How to Determine Optimal Rate
 
-1. **Start Conservative:**
+1. **Start with Clay's Limit:**
    ```
-   Rate Limit: 20 req/sec (default)
+   Rate Limit: 10 req/sec (Clay's sustained rate)
    ```
 
 2. **Monitor Clay's Response:**
    - Check webhook logs for 429 errors (rate limiting)
-   - Look for increased error rates
+   - Look for throttling messages
 
-3. **Gradually Increase:**
+3. **Test Burst Capacity (Optional):**
    ```
-   No errors → increase to 30 req/sec
-   Still good → increase to 50 req/sec
-   Seeing 429s → reduce back
+   Can try 15-20 req/sec for short bursts
+   But expect throttling for large datasets
+   Reduce back to 10 if seeing 429s
    ```
 
-4. **Sweet Spot:**
-   - Most webhook APIs: 20-50 req/sec
-   - Enterprise APIs: 100+ req/sec
+4. **Sweet Spot for Clay:**
+   - **Recommended:** 10 req/sec (sustainable)
+   - **Burst:** 15-20 req/sec (short periods only)
+   - **Too high:** >20 req/sec (will cause errors)
 
-### Clay Rate Limit (Estimated)
+### Clay Rate Limit (Official)
 
-**We don't have official docs from Clay, but testing suggests:**
-- **Safe default:** 20 req/sec per worker
-- **Aggressive:** 50 req/sec per worker
-- **With multiple workers:** Total rate = workers × rate_limit
+**Per Clay's documentation:**
+- **Sustained:** 10 records/sec per workspace
+- **Burst:** 20 records max capacity
 
-**Example:**
+**Important Notes:**
+- ⚠️ Limit is **per workspace**, not per worker
+- ⚠️ 20 req/sec only works for short bursts
+- ✅ 10 req/sec is sustainable long-term
+- ✅ Using multiple workers doesn't increase Clay's limit (they all share the same 10 req/sec)
+
+**Recommended Settings:**
 ```
-2 workers × 20 req/sec = 40 req/sec total throughput
-4 workers × 20 req/sec = 80 req/sec total throughput
+Single worker:  10 req/sec (uses full Clay limit)
+Multiple workers: 5 req/sec per worker (to stay under 10 total)
 ```
+
+**Why multiple workers still help:**
+- ✅ Better parallelism for CSV processing
+- ✅ Fault tolerance (if one crashes, others continue)
+- ✅ Can process multiple jobs simultaneously
+- ✅ Non-blocking - app stays responsive
 
 ---
 
@@ -181,12 +193,14 @@ Time (seconds) = Total Leads ÷ (Workers × Rate Limit)
 
 ### Examples:
 
-| Leads | Workers | Rate Limit | Time         |
-|-------|---------|------------|--------------|
-| 1,000 | 2       | 20 req/s   | 25 seconds   |
-| 10,000| 2       | 20 req/s   | 4.2 minutes  |
-| 50,000| 4       | 20 req/s   | 10.4 minutes |
-| 100,000| 6      | 30 req/s   | 9.3 minutes  |
+| Leads | Workers | Rate Limit | Time         | Notes |
+|-------|---------|------------|--------------|-------|
+| 1,000 | 2       | 10 req/s   | 1.7 minutes  | Sustainable |
+| 10,000| 2       | 10 req/s   | 16.7 minutes | Sustainable |
+| 50,000| 2       | 10 req/s   | 83 minutes   | Sustainable |
+| 10,000| 1       | 20 req/s   | 8.3 minutes  | Burst only ⚠️ |
+
+**Note:** Clay's 10 req/sec limit is **per workspace**, not per worker. Multiple workers help with job management, not total throughput to Clay.
 
 ---
 
@@ -261,28 +275,33 @@ railway restart
 
 ## Recommendations
 
-### Small Volume (<5k leads/hour)
+### Small Volume (<10k leads/batch)
+```
+WORKER_COUNT=1
+rate_limit=10 (Clay's limit)
+```
+**Cost:** 1 Railway instance  
+**Processing:** ~16 minutes for 10k leads
+
+### Medium Volume (10k-50k leads/batch)
 ```
 WORKER_COUNT=2
-rate_limit=20
+rate_limit=10 (split across workers if running parallel jobs)
 ```
-**Cost:** 1 Railway instance
+**Cost:** 1 Railway instance  
+**Processing:** ~83 minutes for 50k leads
 
-### Medium Volume (5k-50k leads/hour)
-```
-WORKER_COUNT=4
-rate_limit=30
-```
-**Cost:** 1 Railway instance
-
-### High Volume (50k+ leads/hour)
+### High Volume (Multiple concurrent jobs)
 ```
 Main App: 1 instance
-Worker Service: 3-5 instances
-WORKER_COUNT=4 (per instance)
-rate_limit=30
+Worker Service: 2-3 instances
+WORKER_COUNT=2 (per instance)
+rate_limit=10 total (managed across workers)
 ```
-**Cost:** 4-6 Railway instances
+**Cost:** 3-4 Railway instances  
+**Benefit:** Can process multiple client jobs simultaneously without blocking
+
+**Important:** More workers doesn't increase speed per job (Clay's 10 req/sec limit), but allows processing multiple jobs in parallel.
 
 ---
 

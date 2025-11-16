@@ -166,7 +166,7 @@ def process_files():
         )  # 'download' or 'webhook'
         webhook_url = data.get("webhook_url")
         table_type = data.get("table_type", "companies")
-        rate_limit = data.get("rate_limit", 20)  # requests per second (default: 20 for better performance)
+        rate_limit = data.get("rate_limit", 10)  # requests per second (Clay's sustained limit per workspace)
         record_limit = data.get("record_limit")  # limit for testing
 
         if not job_id:
