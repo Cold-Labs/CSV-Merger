@@ -4,6 +4,37 @@ This file tracks all code changes made to the project. Every modification must b
 
 ---
 
+## [Date: 2025-11-16 - CRITICAL FIX] RQ Worker ImportError - Connection deprecated
+
+### Changed: worker.py (lines 9, 41-46)
+**Type:** Bug Fix
+**Description:** Fixed ImportError preventing RQ workers from starting - removed deprecated `Connection` import
+**Reason:** RQ library updated, `Connection` context manager deprecated in favor of direct connection passing
+**Impact:** **CRITICAL** - Workers were crashing on startup, webhooks not processing
+**Risk Level:** High (broken functionality)
+
+**Error:**
+```
+ImportError: cannot import name 'Connection' from 'rq'
+```
+
+**Fix:**
+```python
+# Before (BROKEN):
+from rq import Worker, Queue, Connection
+with Connection(redis_conn):
+    worker = Worker([queue_name])
+    
+# After (FIXED):
+from rq import Worker, Queue
+queue = Queue(queue_name, connection=redis_conn)
+worker = Worker([queue], connection=redis_conn)
+```
+
+**Status:** ✅ Fixed - workers now start correctly with modern RQ API
+
+---
+
 ## [Date: 2025-11-16 - RATE LIMIT CORRECTION] Update to Clay's Official Rate Limit
 
 ### Changed: Rate limit defaults (simple_app.py, simple_worker.py, static/simple_app.js, templates/simple_index.html)

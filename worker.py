@@ -6,7 +6,7 @@ Processes webhook sending jobs from Redis queue in parallel
 import os
 import sys
 from redis import Redis
-from rq import Worker, Queue, Connection
+from rq import Worker, Queue
 
 # Add current directory to path for imports
 sys.path.insert(0, os.path.dirname(__file__))
@@ -38,8 +38,10 @@ if __name__ == "__main__":
     print(f"🚀 Starting RQ Worker for queue: {queue_name}")
     print(f"📡 Redis: {os.getenv('REDIS_URL', 'localhost:6379')}")
     
-    with Connection(redis_conn):
-        worker = Worker([queue_name])
-        print(f"✅ Worker ready - listening for jobs...")
-        worker.work(with_scheduler=True)
+    # Create queue and worker with direct Redis connection (modern RQ API)
+    queue = Queue(queue_name, connection=redis_conn)
+    worker = Worker([queue], connection=redis_conn)
+    
+    print(f"✅ Worker ready - listening for jobs...")
+    worker.work(with_scheduler=True)
 
