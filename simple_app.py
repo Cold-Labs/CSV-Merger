@@ -853,6 +853,33 @@ def diagnostics_ui():
             border-radius: 4px;
             font-size: 13px;
         }
+        
+        .cancel-btn {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .cancel-btn:hover {
+            background: #fecaca;
+            border-color: #fca5a5;
+            transform: translateY(-1px);
+        }
+        
+        .cancel-btn:active {
+            transform: translateY(0);
+        }
+        
+        .cancel-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -1041,16 +1068,30 @@ def diagnostics_ui():
                                     <th>Progress</th>
                                     <th>Webhook Status</th>
                                     <th>Message</th>
+                                    <th style="text-align: center;">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 ${diag.recent_jobs.jobs.map(job => `
                                     <tr>
                                         <td><code style="font-size: 11px;">${job.job_id.substring(0, 13)}</code></td>
-                                        <td><span class="status-badge ${job.status === 'completed' ? 'connected' : job.status === 'processing' ? 'busy' : 'idle'}">${job.status}</span></td>
+                                        <td><span class="status-badge ${job.status === 'completed' ? 'connected' : job.status === 'processing' ? 'busy' : job.status === 'cancelled' ? 'error' : 'idle'}">${job.status}</span></td>
                                         <td>${job.progress}%</td>
                                         <td><code>${job.webhook_status}</code></td>
-                                        <td style="font-size: 12px; max-width: 300px; overflow: hidden; text-overflow: ellipsis;">${job.message}</td>
+                                        <td style="font-size: 12px; max-width: 250px; overflow: hidden; text-overflow: ellipsis;">${job.message}</td>
+                                        <td style="text-align: center;">
+                                            ${job.status === 'processing' ? `
+                                                <button onclick="cancelJob('${job.job_id}')" class="cancel-btn" title="Cancel job">
+                                                    🛑 Cancel
+                                                </button>
+                                            ` : job.status === 'completed' ? `
+                                                <span style="color: #15803d; font-size: 12px;">✅ Done</span>
+                                            ` : job.status === 'cancelled' ? `
+                                                <span style="color: #991b1b; font-size: 12px;">❌ Cancelled</span>
+                                            ` : `
+                                                <span style="color: #6b7280; font-size: 12px;">—</span>
+                                            `}
+                                        </td>
                                     </tr>
                                 `).join('')}
                             </tbody>
@@ -1082,6 +1123,46 @@ def diagnostics_ui():
                     </div>
                 </div>
             `;
+        }
+        
+        // Cancel job function
+        async function cancelJob(jobId) {
+            if (!confirm('Are you sure you want to cancel this job?')) {
+                return;
+            }
+            
+            try {
+                const button = event.target;
+                button.disabled = true;
+                button.textContent = '⏳ Cancelling...';
+                
+                const response = await fetch(`/api/cancel/${jobId}`, {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    button.textContent = '✅ Cancelled';
+                    button.style.background = '#dcfce7';
+                    button.style.color = '#15803d';
+                    button.style.borderColor = '#bbf7d0';
+                    
+                    // Refresh diagnostics to show updated status
+                    setTimeout(() => {
+                        fetchDiagnostics();
+                    }, 1000);
+                } else {
+                    alert('Failed to cancel job: ' + data.error);
+                    button.disabled = false;
+                    button.textContent = '🛑 Cancel';
+                }
+            } catch (error) {
+                console.error('Cancel error:', error);
+                alert('Failed to cancel job: ' + error.message);
+                button.disabled = false;
+                button.textContent = '🛑 Cancel';
+            }
         }
         
         // Start countdown
@@ -1358,14 +1439,36 @@ def test_webhook():
 
 @app.route("/api/cancel/<job_id>", methods=["POST"])
 def cancel_job(job_id):
-    """Cancel a running job"""
+    """Cancel a running job (both in-progress and queued)"""
     import json
+    from rq.job import Job
+    from rq import cancel_job as rq_cancel_job
 
     try:
         print(f"🛑 Cancel request for job {job_id}")
 
-        # Set cancellation flag in Redis
+        # Set cancellation flag in Redis (for in-progress webhooks)
         redis_client.hset(f"job_cancel:{job_id}", "cancelled", "true")
+
+        # Try to cancel the RQ job itself (for queued jobs)
+        job_info = None
+        redis_data = redis_client.hget(f"job_status:{job_id}", "data")
+        if redis_data:
+            try:
+                job_info = json.loads(redis_data)
+                rq_job_id = job_info.get("rq_job_id")
+                
+                if rq_job_id:
+                    try:
+                        # Cancel the RQ job if it's queued
+                        rq_job = Job.fetch(rq_job_id, connection=redis_client)
+                        if rq_job.get_status() in ['queued', 'started']:
+                            rq_cancel_job(rq_job_id, connection=redis_client)
+                            print(f"✅ Cancelled RQ job {rq_job_id}")
+                    except Exception as rq_err:
+                        print(f"⚠️ Could not cancel RQ job: {rq_err}")
+            except json.JSONDecodeError:
+                pass
 
         # Update job status if it exists
         if job_id in job_status:
@@ -1385,13 +1488,31 @@ def cancel_job(job_id):
                 )
             except Exception as e:
                 print(f"⚠️ Redis update failed: {e}")
+        
+        # Also update Redis directly if job_info exists
+        if job_info:
+            job_info.update({
+                "status": "cancelled",
+                "message": "Job cancelled by user",
+                "cancelled_at": datetime.now().isoformat(),
+                "can_cancel": False,
+            })
+            try:
+                redis_client.hset(
+                    f"job_status:{job_id}",
+                    mapping={"data": json.dumps(job_info, default=str)},
+                )
+            except Exception as e:
+                print(f"⚠️ Redis update failed: {e}")
 
         return jsonify(
-            {"success": True, "message": "Job cancellation requested", "job_id": job_id}
+            {"success": True, "message": "Job cancelled successfully", "job_id": job_id}
         )
 
     except Exception as e:
         print(f"❌ Cancel failed: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
 
