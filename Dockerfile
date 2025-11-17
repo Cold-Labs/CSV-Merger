@@ -22,10 +22,10 @@ RUN mkdir -p uploads logs exports temp_uploads
 # Make sure upload directories have proper permissions
 RUN chmod 755 uploads logs exports temp_uploads
 
-# Make start script executable
-RUN chmod +x start.sh
+# Make all start scripts executable
+RUN chmod +x start.sh start_web.sh start_worker.sh
 
-# Expose port 8080 (Railway default)
+# Expose port 8080 (Railway default - only used by web service)
 EXPOSE 8080
 
 # Define environment variables
@@ -33,7 +33,13 @@ ENV FLASK_APP=simple_app.py
 ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
-ENV WORKER_COUNT=2
+ENV SERVICE_TYPE=web
 
-# Command to run the application (starts web server + RQ workers)
-CMD ["./start.sh"] 
+# Dynamic startup based on SERVICE_TYPE environment variable
+# For web service: SERVICE_TYPE=web (default)
+# For worker service: SERVICE_TYPE=worker
+CMD if [ "$SERVICE_TYPE" = "worker" ]; then \
+        ./start_worker.sh; \
+    else \
+        ./start_web.sh; \
+    fi 

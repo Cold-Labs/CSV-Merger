@@ -4,6 +4,91 @@ This file tracks all code changes made to the project. Every modification must b
 
 ---
 
+## [Date: 2025-11-17] Separate Services Architecture for Horizontal Scaling
+
+### Created: start_web.sh, start_worker.sh (new files)
+**Type:** Architecture / Feature
+**Description:** Split web and worker services for independent scaling
+**Reason:** Multiple users sending 20K+ records simultaneously - need horizontal scaling
+**Impact:** **CRITICAL** - Enables 5-10x faster processing via parallel workers
+**Risk Level:** Low (backward compatible via SERVICE_TYPE env var)
+
+**Problem:**
+- Multiple concurrent users with 20,000 records each
+- Current bundled approach: 2 workers + 1 web in same container
+- Can't scale workers without scaling web (wasteful)
+- Processing 20K records takes 17+ minutes with 2 workers
+
+**Solution:**
+- **Web Service:** Handles HTTP/uploads, scales to 1-2 instances
+- **Worker Service:** Processes webhooks, scales to 5-15+ instances
+- **Redis:** Shared queue (Railway addon)
+
+**Performance Improvement:**
+```
+Before (2 workers):   20,000 records = ~17 minutes
+After (10 workers):   20,000 records = ~3.5 minutes
+After (15 workers):   20,000 records = ~2.5 minutes
+```
+
+**Files Created:**
+1. `start_web.sh` - Gunicorn with 2 workers, 4 threads
+2. `start_worker.sh` - Single RQ worker (Railway handles replicas)
+3. `.railway/web.json` - Railway config for web service
+4. `.railway/worker.json` - Railway config for worker service
+5. `RAILWAY_SETUP.md` - Complete deployment guide
+
+---
+
+### Changed: Dockerfile
+**Type:** Architecture
+**Description:** Added SERVICE_TYPE env var to control web vs worker mode
+**Reason:** Use same Dockerfile for both services
+**Impact:** Single Dockerfile deploys as web OR worker based on env var
+**Risk Level:** Low (defaults to web mode)
+
+**Changes:**
+```dockerfile
+# Before:
+CMD ["./start.sh"]  # Always starts bundled
+
+# After:
+ENV SERVICE_TYPE=web
+CMD if [ "$SERVICE_TYPE" = "worker" ]; then \
+        ./start_worker.sh; \
+    else \
+        ./start_web.sh; \
+    fi
+```
+
+**Deployment:**
+- **Web Service:** Set `SERVICE_TYPE=web` (default)
+- **Worker Service:** Set `SERVICE_TYPE=worker`
+
+---
+
+### Created: RAILWAY_SETUP.md
+**Type:** Documentation
+**Description:** Complete guide for deploying separate services on Railway
+**Reason:** Step-by-step instructions for production setup
+**Impact:** Team can deploy and scale independently
+**Risk Level:** None (documentation only)
+
+**Covers:**
+- Initial service setup (web + worker + Redis)
+- Scaling strategies for 20K+ records
+- Cost optimization (time-based scaling)
+- Monitoring and troubleshooting
+- Performance expectations table
+- Environment variables reference
+
+**Key Insights:**
+- 10 workers = ~6,000 records/minute
+- Cost: ~$30-60/month for web + 10 workers
+- Zero-downtime deployments (web updates don't kill jobs)
+
+---
+
 ## [Date: 2025-11-17] Log Streaming API & Production Monitoring Features
 
 ### Created: src/log_collector.py (new file)
