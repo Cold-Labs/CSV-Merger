@@ -33,9 +33,6 @@ ENV FLASK_APP=simple_app.py
 ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
-ENV SERVICE_TYPE=web
 
-# Dynamic startup based on SERVICE_TYPE environment variable
-# For web service: SERVICE_TYPE=web (default)
-# For worker service: SERVICE_TYPE=worker
-CMD ["/bin/bash", "-c", "if [ \"$SERVICE_TYPE\" = \"worker\" ]; then exec ./start_worker.sh; else exec ./start_web.sh; fi"] 
+# Default: Start web server (override with Railway's Custom Start Command for workers)
+CMD ["./start_web.sh"] 
