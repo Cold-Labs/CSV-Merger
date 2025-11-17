@@ -4,6 +4,67 @@ This file tracks all code changes made to the project. Every modification must b
 
 ---
 
+## [Date: 2025-11-17 16:30] **CRITICAL: Refactor to Pass Data Through Redis (No Shared Storage!)**
+
+### Changed: simple_app.py, simple_worker.py
+**Type:** Architecture Refactor / Bug Fix
+**Description:** Refactored webhook worker to receive records data through Redis instead of file paths
+**Reason:** Worker service couldn't access CSV files created by web service (separate containers = separate file systems)
+**Impact:** **ELIMINATES NEED FOR SHARED VOLUMES** - workers are now truly stateless
+**Risk Level:** Low (better architecture, more robust)
+
+**Problem:**
+```
+BEFORE (BROKEN):
+1. Web service: Save CSV → uploads/job123/processed.csv
+2. Web service: Enqueue job with FILE PATH
+3. Worker service: Try to read file → ❌ FILE NOT FOUND
+4. Stuck at 80%
+
+Why: Separate Railway services = separate containers = separate file systems
+```
+
+**Solution:**
+```
+AFTER (FIXED):
+1. Web service: Process CSV → read into memory as records[]
+2. Web service: Enqueue job with RECORDS DATA (stored in Redis)
+3. Worker service: Receive records from Redis → ✅ DATA AVAILABLE
+4. Worker service: Send webhooks
+```
+
+**Code Changes:**
+
+**simple_app.py:**
+- Read processed CSV after Phase 3 completes
+- Convert DataFrame to records array
+- Pass `records=records` to RQ worker (not `result_path`)
+- Data travels through Redis (max 512MB per job)
+
+**simple_worker.py:**
+- Changed `send_processed_data_webhook_sync(result_path=...)` → `send_processed_data_webhook_sync(records=...)`
+- Removed file system access (`os.path.exists()`, `pd.read_csv()`)
+- Worker now receives data directly from Redis
+- No file system dependencies
+
+**Benefits:**
+✅ **No shared storage needed** - Workers don't need volume mounts
+✅ **More robust** - No file system race conditions
+✅ **Truly stateless** - Workers can scale independently
+✅ **Simpler deployment** - Fewer Railway configuration steps
+✅ **Better error messages** - Data validation happens at enqueue time
+
+**Limitations:**
+- Redis max job size: 512MB (enough for ~500K-1M records)
+- For larger datasets, could implement chunking or S3 storage
+
+**Railway Impact:**
+- **Worker service NO LONGER needs volume mount**
+- Can remove `angelic-volume` from worker
+- `amusing-volume` only needed by web service for uploads and download feature
+
+---
+
 ## [Date: 2025-11-17 16:10] Diagnostic API Endpoint for Troubleshooting
 
 ### Created: /api/diagnostics GET endpoint

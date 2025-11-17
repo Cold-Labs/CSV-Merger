@@ -331,14 +331,23 @@ def process_files():
                     except Exception as e:
                         print(f"⚠️ Redis update failed: {e}")
 
-                    # Enqueue webhook job to RQ worker (non-blocking)
-                    print(f"📤 Enqueuing webhook job for {job_id} to RQ worker...")
+                    # Read processed CSV and enqueue records data (not file path)
+                    print(f"📤 Reading processed CSV and enqueueing data to RQ worker...")
                     
                     try:
+                        # Read the processed CSV file into memory
+                        import pandas as pd
+                        
+                        final_df = pd.read_csv(result_path)
+                        records = final_df.to_dict("records")
+                        
+                        print(f"📊 Read {len(records)} records from CSV, enqueueing to worker...")
+                        
+                        # Enqueue job with records data (passed through Redis)
                         rq_job = job_queue.enqueue(
                             send_processed_data_webhook_sync,
                             app_job_id=job_id,
-                            result_path=result_path,
+                            records=records,  # Pass data, not file path!
                             webhook_url=webhook_url,
                             rate_limit=rate_limit,
                             record_limit=record_limit,
@@ -347,13 +356,13 @@ def process_files():
                             result_ttl=86400,  # Keep result for 24 hours
                         )
                         
-                        print(f"✅ Webhook job enqueued with ID: {rq_job.id}")
+                        print(f"✅ Webhook job enqueued with ID: {rq_job.id} (data passed through Redis)")
                         
                         # Update job status with RQ job ID
                         job_status[job_id].update({
                             "webhook_status": "queued",
                             "rq_job_id": rq_job.id,
-                            "message": "Webhook job queued - worker will process in parallel"
+                            "message": f"Webhook job queued with {len(records)} records - worker will process in parallel"
                         })
                         
                         try:
@@ -368,6 +377,8 @@ def process_files():
                     
                     except Exception as enqueue_error:
                         print(f"❌ Failed to enqueue webhook job: {enqueue_error}")
+                        import traceback
+                        traceback.print_exc()
                         job_status[job_id].update({
                             "status": "completed",
                             "progress": 100,

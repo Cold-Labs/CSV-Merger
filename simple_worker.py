@@ -39,43 +39,38 @@ job_status = {}
 
 def send_processed_data_webhook_sync(
     app_job_id=None,
-    result_path=None,
+    records=None,
     webhook_url=None,
     rate_limit=10,
     record_limit=None,
     table_type=None,
 ):
-    """Send webhooks synchronously in main process (no forking issues)"""
+    """
+    Send webhooks synchronously using records data passed through Redis.
+    
+    This worker function receives the actual data (not a file path), making it
+    truly stateless and eliminating the need for shared storage between services.
+    """
 
     # Validate required parameters
     if not app_job_id:
         raise ValueError("app_job_id is required")
-    if not result_path:
-        raise ValueError("result_path is required")
+    if not records:
+        raise ValueError("records data is required")
     if not webhook_url:
         raise ValueError("webhook_url is required")
     if not table_type:
         raise ValueError("table_type is required")
 
-    print(f"🚀 Sending webhooks directly for job {app_job_id}")
+    print(f"🚀 Worker processing webhook job {app_job_id}")
     print(
-        f"📦 Parameters: result_path={result_path}, webhook_url={webhook_url}, rate_limit={rate_limit}, record_limit={record_limit}, table_type={table_type}"
+        f"📦 Parameters: webhook_url={webhook_url}, rate_limit={rate_limit}, record_limit={record_limit}, table_type={table_type}"
     )
 
     try:
-        # Read the already-processed CSV file
-        import os
-
-        import pandas as pd
-
-        if not os.path.exists(result_path):
-            raise FileNotFoundError(f"Processed file not found: {result_path}")
-
-        final_df = pd.read_csv(result_path)
-        records = final_df.to_dict("records")
-
+        # Records are already in memory (passed through Redis)
         print(
-            f"📊 Loaded {len(records)} processed records, sending individual webhooks..."
+            f"📊 Received {len(records)} processed records from Redis, sending webhooks..."
         )
 
         # Send via webhook with retry logic
