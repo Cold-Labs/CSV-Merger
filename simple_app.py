@@ -4,6 +4,7 @@ CSV Merger - Simplified Application
 No WebSockets, no auth, no multi-tenancy - just core CSV processing
 """
 
+import json
 import os
 import tempfile
 import threading

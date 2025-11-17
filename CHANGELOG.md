@@ -4,6 +4,25 @@ This file tracks all code changes made to the project. Every modification must b
 
 ---
 
+## [Date: 2025-11-17 18:45] **CRITICAL BUG FIX: Missing json Import**
+
+### Changed: simple_app.py
+**Type:** Critical Bug Fix
+**Description:** Added missing `import json` statement at the top of simple_app.py
+**Reason:** Diagnostics API endpoint was failing with "name 'json' is not defined" error when trying to parse job data from Redis
+**Impact:** Diagnostics dashboard now works correctly, no more parsing errors in logs
+**Risk Level:** Low (simple import fix, no logic changes)
+
+**Problem:**
+- Diagnostics API endpoint (`/api/diagnostics`) uses `json.loads()` in 4 places
+- `json` module was never imported
+- Every call to diagnostics caused hundreds of "name 'json' is not defined" errors in Railway logs
+
+**Solution:**
+- Added `import json` at line 7 in simple_app.py
+
+---
+
 ## [Date: 2025-11-17 18:40] **CRITICAL: Adaptive Rate Limiting + Fix Progress & Success Counting**
 
 ### Changed: simple_worker.py
