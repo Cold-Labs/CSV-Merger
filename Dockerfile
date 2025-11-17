@@ -38,8 +38,4 @@ ENV SERVICE_TYPE=web
 # Dynamic startup based on SERVICE_TYPE environment variable
 # For web service: SERVICE_TYPE=web (default)
 # For worker service: SERVICE_TYPE=worker
-CMD if [ "$SERVICE_TYPE" = "worker" ]; then \
-        ./start_worker.sh; \
-    else \
-        ./start_web.sh; \
-    fi 
+CMD ["/bin/bash", "-c", "if [ \"$SERVICE_TYPE\" = \"worker\" ]; then exec ./start_worker.sh; else exec ./start_web.sh; fi"] 
