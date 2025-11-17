@@ -4,6 +4,39 @@ This file tracks all code changes made to the project. Every modification must b
 
 ---
 
+## [Date: 2025-11-17 17:05] Beautiful Diagnostics UI with Auto-Refresh
+
+### Created: /diagnostics route (HTML UI)
+**Type:** Feature / UX Improvement  
+**Description:** Created beautiful, auto-refreshing diagnostics dashboard UI
+**Reason:** User requested nice-looking UI that refreshes every 5 seconds for easy monitoring
+**Impact:** Much easier to monitor system status without dealing with raw JSON
+**Risk Level:** Low (new route, doesn't affect existing functionality)
+
+**Features:**
+- 🎨 **Modern UI** with gradient background and card-based layout
+- ⏱️ **Auto-refresh** every 5 seconds with countdown timer
+- 📊 **Real-time metrics**: Workers, queue status, CPU, memory, disk usage
+- 📈 **Progress bars** for resource utilization
+- 🔴🟢 **Status badges** (connected, busy, idle, error)
+- 📋 **Recent jobs table** with status and progress
+- ⚙️ **Worker cards** showing current jobs and success/failure counts
+- 💾 **Redis stats** and connection info
+- 📁 **File system** information
+
+**URLs:**
+- **UI**: `https://merger.up.railway.app/diagnostics` (HTML dashboard)
+- **API**: `https://merger.up.railway.app/api/diagnostics` (JSON, unchanged)
+
+**Design:**
+- Purple gradient background
+- White cards with subtle shadows
+- Responsive grid layout
+- Smooth animations and transitions
+- Clean typography with proper hierarchy
+
+---
+
 ## [Date: 2025-11-17 16:30] **CRITICAL: Refactor to Pass Data Through Redis (No Shared Storage!)**
 
 ### Changed: simple_app.py, simple_worker.py

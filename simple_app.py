@@ -635,9 +635,469 @@ def get_error_summary():
         return jsonify({"error": f"Failed to fetch error summary: {str(e)}"}), 500
 
 
+@app.route("/diagnostics", methods=["GET"])
+def diagnostics_ui():
+    """Beautiful UI for diagnostics with auto-refresh"""
+    return """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV Merger Diagnostics</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .header h1 {
+            font-size: 32px;
+            color: #667eea;
+        }
+        
+        .refresh-info {
+            text-align: right;
+        }
+        
+        .refresh-countdown {
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .refresh-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background: #4ade80;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .card {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .card h2 {
+            font-size: 18px;
+            margin-bottom: 20px;
+            color: #667eea;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .status-badge.connected {
+            background: #dcfce7;
+            color: #15803d;
+        }
+        
+        .status-badge.busy {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        
+        .status-badge.idle {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        
+        .status-badge.error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #f3f4f6;
+        }
+        
+        .info-row:last-child {
+            border-bottom: none;
+        }
+        
+        .info-label {
+            font-weight: 600;
+            color: #6b7280;
+        }
+        
+        .info-value {
+            color: #111827;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e5e7eb;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.3s ease;
+        }
+        
+        .worker-card {
+            background: #f9fafb;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+        
+        .worker-card:last-child {
+            margin-bottom: 0;
+        }
+        
+        .job-table {
+            width: 100%;
+            margin-top: 15px;
+        }
+        
+        .job-table th {
+            text-align: left;
+            padding: 10px;
+            background: #f9fafb;
+            font-weight: 600;
+            color: #6b7280;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        
+        .job-table td {
+            padding: 10px;
+            border-bottom: 1px solid #f3f4f6;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #9ca3af;
+        }
+        
+        .metric {
+            text-align: center;
+            padding: 15px;
+        }
+        
+        .metric-value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .metric-label {
+            font-size: 12px;
+            color: #6b7280;
+            text-transform: uppercase;
+            margin-top: 5px;
+        }
+        
+        code {
+            background: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>🔍 System Diagnostics</h1>
+                <p style="color: #666; margin-top: 5px;">Real-time monitoring dashboard</p>
+            </div>
+            <div class="refresh-info">
+                <div class="refresh-countdown">
+                    <span class="refresh-indicator"></span>
+                    Auto-refresh in <strong id="countdown">5</strong>s
+                </div>
+                <div style="margin-top: 8px; font-size: 12px; color: #999;">
+                    Last updated: <span id="timestamp">--</span>
+                </div>
+            </div>
+        </div>
+        
+        <div id="content">
+            <div style="text-align: center; padding: 60px; color: white;">
+                <div style="font-size: 48px; margin-bottom: 20px;">⏳</div>
+                <div style="font-size: 18px;">Loading diagnostics...</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let countdownValue = 5;
+        let countdownInterval;
+        
+        function updateCountdown() {
+            countdownValue--;
+            document.getElementById('countdown').textContent = countdownValue;
+            if (countdownValue <= 0) {
+                fetchDiagnostics();
+                countdownValue = 5;
+            }
+        }
+        
+        function formatTimestamp(ts) {
+            const date = new Date(ts);
+            return date.toLocaleTimeString('en-US', { hour12: false });
+        }
+        
+        function formatBytes(gb) {
+            return gb.toFixed(1) + ' GB';
+        }
+        
+        function formatUptime(seconds) {
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            return `${days}d ${hours}h`;
+        }
+        
+        async function fetchDiagnostics() {
+            try {
+                const response = await fetch('/api/diagnostics');
+                const data = await response.json();
+                renderDiagnostics(data.diagnostics);
+                document.getElementById('timestamp').textContent = formatTimestamp(data.diagnostics.timestamp);
+            } catch (error) {
+                console.error('Failed to fetch diagnostics:', error);
+            }
+        }
+        
+        function renderDiagnostics(diag) {
+            const content = document.getElementById('content');
+            
+            content.innerHTML = `
+                <div class="grid">
+                    <!-- Service Info -->
+                    <div class="card">
+                        <h2>🚀 Service Information</h2>
+                        <div class="info-row">
+                            <span class="info-label">Service Type</span>
+                            <span class="info-value"><code>${diag.service_info.service_type}</code></span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Service Name</span>
+                            <span class="info-value">${diag.service_info.railway_service_name}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Environment</span>
+                            <span class="info-value">${diag.service_info.railway_environment}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Port</span>
+                            <span class="info-value">${diag.service_info.port}</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Redis Status -->
+                    <div class="card">
+                        <h2>💾 Redis Status <span class="status-badge ${diag.redis.status === 'connected' ? 'connected' : 'error'}">${diag.redis.status}</span></h2>
+                        <div class="info-row">
+                            <span class="info-label">Host</span>
+                            <span class="info-value">${diag.redis.connection_info.host}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Port</span>
+                            <span class="info-value">${diag.redis.connection_info.port}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Jobs Stored</span>
+                            <span class="info-value">${diag.redis.job_count}</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Ops/sec</span>
+                            <span class="info-value">${diag.redis.stats.instantaneous_ops_per_sec}</span>
+                        </div>
+                    </div>
+                    
+                    <!-- System Resources -->
+                    <div class="card">
+                        <h2>💻 System Resources</h2>
+                        <div class="info-row">
+                            <span class="info-label">CPU Usage</span>
+                            <span class="info-value">${diag.system.cpu_percent}%</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${diag.system.cpu_percent}%"></div>
+                        </div>
+                        <div class="info-row" style="margin-top: 15px;">
+                            <span class="info-label">Memory Usage</span>
+                            <span class="info-value">${diag.system.memory.percent_used}%</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${diag.system.memory.percent_used}%"></div>
+                        </div>
+                        <div class="info-row" style="margin-top: 15px;">
+                            <span class="info-label">Uptime</span>
+                            <span class="info-value">${formatUptime(diag.system.uptime_seconds)}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- RQ Workers -->
+                <div class="card" style="margin-bottom: 20px;">
+                    <h2>⚙️ RQ Workers (${diag.rq_workers.workers_count} active)</h2>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
+                        <div class="metric">
+                            <div class="metric-value">${diag.rq_workers.workers_count}</div>
+                            <div class="metric-label">Workers</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">${diag.rq_workers.jobs_queued}</div>
+                            <div class="metric-label">Jobs Queued</div>
+                        </div>
+                    </div>
+                    
+                    ${diag.rq_workers.workers.length > 0 ? diag.rq_workers.workers.map(worker => `
+                        <div class="worker-card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <strong style="color: #667eea;">Worker ${worker.name.substring(0, 8)}</strong>
+                                <span class="status-badge ${worker.state === 'busy' ? 'busy' : 'idle'}">${worker.state}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Successful</span>
+                                <span class="info-value">${worker.successful_jobs}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Failed</span>
+                                <span class="info-value">${worker.failed_jobs}</span>
+                            </div>
+                            ${worker.current_job ? `
+                                <div class="info-row">
+                                    <span class="info-label">Current Job</span>
+                                    <span class="info-value" style="font-size: 11px;">${worker.current_job.substring(0, 100)}...</span>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `).join('') : '<div class="empty-state">No workers running</div>'}
+                </div>
+                
+                <!-- Recent Jobs -->
+                <div class="card" style="margin-bottom: 20px;">
+                    <h2>📋 Recent Jobs (${diag.recent_jobs.count})</h2>
+                    ${diag.recent_jobs.jobs.length > 0 ? `
+                        <table class="job-table">
+                            <thead>
+                                <tr>
+                                    <th>Job ID</th>
+                                    <th>Status</th>
+                                    <th>Progress</th>
+                                    <th>Webhook Status</th>
+                                    <th>Message</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${diag.recent_jobs.jobs.map(job => `
+                                    <tr>
+                                        <td><code style="font-size: 11px;">${job.job_id.substring(0, 13)}</code></td>
+                                        <td><span class="status-badge ${job.status === 'completed' ? 'connected' : job.status === 'processing' ? 'busy' : 'idle'}">${job.status}</span></td>
+                                        <td>${job.progress}%</td>
+                                        <td><code>${job.webhook_status}</code></td>
+                                        <td style="font-size: 12px; max-width: 300px; overflow: hidden; text-overflow: ellipsis;">${job.message}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    ` : '<div class="empty-state">No recent jobs in Redis</div>'}
+                </div>
+                
+                <!-- File System -->
+                <div class="card">
+                    <h2>📁 File System</h2>
+                    <div class="info-row">
+                        <span class="info-label">Upload Folder</span>
+                        <span class="info-value"><code>${diag.filesystem.upload_folder}</code></span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Writable</span>
+                        <span class="info-value">${diag.filesystem.upload_folder_writable ? '✅ Yes' : '❌ No'}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Recent Jobs</span>
+                        <span class="info-value">${diag.filesystem.recent_jobs.length} folders</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Disk Usage</span>
+                        <span class="info-value">${formatBytes(diag.filesystem.disk_usage.used_gb)} / ${formatBytes(diag.filesystem.disk_usage.total_gb)}</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${diag.filesystem.disk_usage.percent_used}%"></div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Start countdown
+        countdownInterval = setInterval(updateCountdown, 1000);
+        
+        // Initial load
+        fetchDiagnostics();
+    </script>
+</body>
+</html>
+    """
+
+
 @app.route("/api/diagnostics", methods=["GET"])
 def diagnostics():
-    """Comprehensive diagnostic endpoint for troubleshooting"""
+    """Comprehensive diagnostic endpoint for troubleshooting (JSON API)"""
     import platform
     import psutil
     from datetime import datetime
