@@ -462,6 +462,168 @@ def get_job_status(job_id):
     return jsonify({"success": True, "job_id": job_id, "status": job_status[job_id]})
 
 
+@app.route("/api/logs", methods=["GET"])
+def get_logs():
+    """
+    Query logs with filters - accessible from Cursor/CLI
+    
+    Query parameters:
+        start: Start date (ISO format or relative: '1d', '2d', '7d', 'yesterday', 'today')
+        end: End date (ISO format, defaults to now)
+        job_id: Filter by job ID
+        level: Filter by log level (INFO, WARNING, ERROR, CRITICAL)
+        error_type: Filter by error type
+        limit: Max number of logs (default: 1000)
+    
+    Examples:
+        /api/logs?start=yesterday
+        /api/logs?start=2d&level=ERROR
+        /api/logs?job_id=abc123
+    """
+    from src.log_collector import get_log_collector
+    from datetime import datetime, timedelta, timezone
+    
+    try:
+        log_collector = get_log_collector()
+        
+        # Parse parameters
+        start_param = request.args.get("start")
+        end_param = request.args.get("end")
+        job_id = request.args.get("job_id")
+        level = request.args.get("level")
+        error_type = request.args.get("error_type")
+        limit = int(request.args.get("limit", 1000))
+        
+        # Parse time parameters
+        now = datetime.now(timezone.utc)
+        end_time = now
+        
+        if end_param:
+            try:
+                end_time = datetime.fromisoformat(end_param.replace('Z', '+00:00'))
+            except ValueError:
+                return jsonify({"error": "Invalid end time format. Use ISO format."}), 400
+        
+        # Parse start time (support relative dates)
+        if start_param:
+            if start_param == "today":
+                start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            elif start_param == "yesterday":
+                start_time = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            elif start_param.endswith("d"):
+                # Relative days (e.g., "2d" = 2 days ago)
+                try:
+                    days = int(start_param[:-1])
+                    start_time = now - timedelta(days=days)
+                except ValueError:
+                    return jsonify({"error": "Invalid start time format"}), 400
+            elif start_param.endswith("h"):
+                # Relative hours (e.g., "24h" = 24 hours ago)
+                try:
+                    hours = int(start_param[:-1])
+                    start_time = now - timedelta(hours=hours)
+                except ValueError:
+                    return jsonify({"error": "Invalid start time format"}), 400
+            else:
+                # ISO format
+                try:
+                    start_time = datetime.fromisoformat(start_param.replace('Z', '+00:00'))
+                except ValueError:
+                    return jsonify({"error": "Invalid start time format"}), 400
+        else:
+            # Default: last 7 days
+            start_time = now - timedelta(days=7)
+        
+        # Query logs
+        logs = log_collector.query_logs(
+            start_time=start_time,
+            end_time=end_time,
+            job_id=job_id,
+            level=level,
+            error_type=error_type,
+            limit=limit,
+        )
+        
+        return jsonify({
+            "success": True,
+            "count": len(logs),
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+            "filters": {
+                "job_id": job_id,
+                "level": level,
+                "error_type": error_type,
+            },
+            "logs": logs,
+        })
+        
+    except Exception as e:
+        return jsonify({"error": f"Failed to fetch logs: {str(e)}"}), 500
+
+
+@app.route("/api/logs/errors/summary", methods=["GET"])
+def get_error_summary():
+    """
+    Get summary of errors by type
+    
+    Query parameters:
+        start: Start date (same format as /api/logs)
+        end: End date
+        job_id: Filter by job ID
+    """
+    from src.log_collector import get_log_collector
+    from datetime import datetime, timedelta, timezone
+    
+    try:
+        log_collector = get_log_collector()
+        
+        # Parse parameters (same logic as get_logs)
+        start_param = request.args.get("start")
+        end_param = request.args.get("end")
+        job_id = request.args.get("job_id")
+        
+        now = datetime.now(timezone.utc)
+        end_time = now
+        
+        if end_param:
+            end_time = datetime.fromisoformat(end_param.replace('Z', '+00:00'))
+        
+        if start_param:
+            if start_param == "today":
+                start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            elif start_param == "yesterday":
+                start_time = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            elif start_param.endswith("d"):
+                days = int(start_param[:-1])
+                start_time = now - timedelta(days=days)
+            elif start_param.endswith("h"):
+                hours = int(start_param[:-1])
+                start_time = now - timedelta(hours=hours)
+            else:
+                start_time = datetime.fromisoformat(start_param.replace('Z', '+00:00'))
+        else:
+            start_time = now - timedelta(days=7)
+        
+        # Get error summary
+        error_summary = log_collector.get_error_summary(
+            start_time=start_time,
+            end_time=end_time,
+            job_id=job_id,
+        )
+        
+        return jsonify({
+            "success": True,
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+            "job_id": job_id,
+            "error_counts": error_summary,
+            "total_errors": sum(error_summary.values()),
+        })
+        
+    except Exception as e:
+        return jsonify({"error": f"Failed to fetch error summary: {str(e)}"}), 500
+
+
 @app.route("/api/test-webhook", methods=["POST"])
 def test_webhook():
     """Test webhook endpoint with sample data"""

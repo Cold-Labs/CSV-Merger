@@ -15,6 +15,7 @@ from redis import Redis
 
 from simple_config import Config
 from simple_csv_processor import CSVProcessor
+from src.log_collector import get_log_collector
 
 
 def get_redis_config():
@@ -78,7 +79,7 @@ def send_processed_data_webhook_sync(
         )
 
         # Send via webhook with retry logic
-        webhook_sender = WebhookSender(webhook_url, rate_limit)
+        webhook_sender = WebhookSender(webhook_url, rate_limit, job_id=app_job_id)
         success_count, failed_count = webhook_sender.send_records_batch(
             records=records,
             job_id=app_job_id,
@@ -153,7 +154,7 @@ def process_job(
         update_job_status(job_id, "processing", 80, "Sending webhook...")
 
         try:
-            webhook_sender = WebhookSender(webhook_url, rate_limit)
+            webhook_sender = WebhookSender(webhook_url, rate_limit, job_id=job_id)
 
             success_count, failed_count = webhook_sender.send_records_batch(
                 records=records,
@@ -290,11 +291,12 @@ def update_job_status_with_time(
 class WebhookSender:
     """Handles webhook delivery with retry logic and rate limiting"""
 
-    def __init__(self, webhook_url: str, rate_limit: int = 10):
+    def __init__(self, webhook_url: str, rate_limit: int = 10, job_id: Optional[str] = None):
         self.webhook_url = webhook_url
         self.config = Config()
         self.rate_limit = rate_limit  # requests per second
         self.delay_between_requests = 1.0 / rate_limit  # seconds between requests
+        self.job_id = job_id  # Track job ID for logging
 
     def _split_emails_to_columns(
         self, records: List[Dict], table_type: str
@@ -402,7 +404,7 @@ class WebhookSender:
 
             # Send individual record with retry
             webhook_success = self._send_individual_record_with_retry(
-                record, record_num, max_retries, table_type
+                record, record_num, max_retries, table_type, job_id
             )
             webhook_end = time.time()
 
@@ -470,7 +472,7 @@ class WebhookSender:
             return False
 
     def _send_individual_record_with_retry(
-        self, record: Dict, record_num: int, max_retries: int, table_type: str
+        self, record: Dict, record_num: int, max_retries: int, table_type: str, job_id: Optional[str] = None
     ) -> bool:
         """Send a single record as individual webhook with retry logic"""
         for attempt in range(max_retries):
@@ -600,17 +602,63 @@ class WebhookSender:
                 if response.status_code == 200:
                     return True
                 else:
+                    # Log non-200 responses
+                    error_type = f"HTTP_{response.status_code}"
                     print(
                         f"⚠️ Record {record_num} attempt {attempt + 1}: HTTP {response.status_code}"
                     )
+                    
+                    # Log to structured logger (on final attempt)
+                    if attempt == max_retries - 1:
+                        try:
+                            log_collector = get_log_collector()
+                            log_collector.log(
+                                level="ERROR",
+                                message=f"Webhook failed for record {record_num} after {max_retries} attempts: HTTP {response.status_code}",
+                                job_id=job_id or self.job_id,
+                                error_type=error_type,
+                                record_number=record_num,
+                                metadata={
+                                    "status_code": response.status_code,
+                                    "response_text": response.text[:500] if response.text else None,
+                                    "webhook_url": self.webhook_url,
+                                },
+                            )
+                        except Exception as log_err:
+                            print(f"⚠️ Failed to log error: {log_err}")
 
             except Exception as e:
+                error_msg = str(e)
                 print(f"⚠️ Record {record_num} attempt {attempt + 1} failed: {e}")
+                
+                # Log exception (on final attempt)
+                if attempt == max_retries - 1:
+                    try:
+                            log_collector = get_log_collector()
+                            log_collector.log(
+                                level="ERROR",
+                                message=f"Webhook exception for record {record_num} after {max_retries} attempts: {error_msg}",
+                                job_id=job_id or self.job_id,
+                                error_type="EXCEPTION",
+                                record_number=record_num,
+                                metadata={
+                                    "exception_type": type(e).__name__,
+                                    "exception_message": error_msg,
+                                    "webhook_url": self.webhook_url,
+                                },
+                            )
+                    except Exception as log_err:
+                        print(f"⚠️ Failed to log error: {log_err}")
 
-            # Exponential backoff
+            # Exponential backoff with jitter
             if attempt < max_retries - 1:
-                wait_time = (2**attempt) * 1  # 1s, 2s, 4s
-                print(f"⏳ Retrying record {record_num} in {wait_time}s...")
+                # Base delay: 1s, 2s, 4s
+                base_delay = (2**attempt) * 1
+                # Add small random jitter (±20%) to prevent thundering herd
+                import random
+                jitter = random.uniform(0.8, 1.2)
+                wait_time = base_delay * jitter
+                print(f"⏳ Retrying record {record_num} in {wait_time:.1f}s...")
                 time.sleep(wait_time)
 
         return False

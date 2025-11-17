@@ -299,10 +299,24 @@ async function processFiles(mode) {
     }
 }
 
+// Stuck detection state
+let lastProgressUpdate = {
+    progress: 0,
+    timestamp: Date.now(),
+    consecutiveStuckChecks: 0
+};
+
 function startStatusPolling() {
     if (statusPollingInterval) {
         clearInterval(statusPollingInterval);
     }
+    
+    // Reset stuck detection
+    lastProgressUpdate = {
+        progress: 0,
+        timestamp: Date.now(),
+        consecutiveStuckChecks: 0
+    };
     
     statusPollingInterval = setInterval(async () => {
         try {
@@ -311,7 +325,38 @@ function startStatusPolling() {
             
             if (data.success) {
                 const status = data.status;
-                updateProgress(status.progress || 0, status.message || 'Processing...', status);
+                const currentProgress = status.progress || 0;
+                
+                // Detect stuck progress
+                const now = Date.now();
+                const timeSinceLastUpdate = (now - lastProgressUpdate.timestamp) / 1000; // seconds
+                
+                if (currentProgress === lastProgressUpdate.progress && currentProgress < 100) {
+                    lastProgressUpdate.consecutiveStuckChecks++;
+                    
+                    // Warn if stuck for 2+ minutes with no progress change
+                    if (timeSinceLastUpdate > 120 && lastProgressUpdate.consecutiveStuckChecks > 10) {
+                        console.warn(`⚠️ Job appears stuck at ${currentProgress}% for ${Math.floor(timeSinceLastUpdate)}s`);
+                        
+                        // Show warning after 5 minutes of being stuck
+                        if (timeSinceLastUpdate > 300) {
+                            showMessage(
+                                `⚠️ Job may be stuck at ${currentProgress}%. If this persists, please contact support.`,
+                                'warning'
+                            );
+                            lastProgressUpdate.timestamp = now; // Reset to avoid spam
+                        }
+                    }
+                } else {
+                    // Progress changed, reset tracking
+                    lastProgressUpdate = {
+                        progress: currentProgress,
+                        timestamp: now,
+                        consecutiveStuckChecks: 0
+                    };
+                }
+                
+                updateProgress(currentProgress, status.message || 'Processing...', status);
                 
                 // Show download button as soon as download is ready
                 if (status.download_ready) {

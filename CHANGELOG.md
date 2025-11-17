@@ -4,6 +4,132 @@ This file tracks all code changes made to the project. Every modification must b
 
 ---
 
+## [Date: 2025-11-17] Log Streaming API & Production Monitoring Features
+
+### Created: src/log_collector.py (new file)
+**Type:** Feature
+**Description:** Created structured log collector using Redis for queryable logs with 7-day retention
+**Reason:** Enable log querying from Cursor/CLI with date range filtering for better debugging
+**Impact:** New logging infrastructure for production monitoring
+**Risk Level:** Low (additive feature, doesn't affect existing functionality)
+
+**Features:**
+- Store logs in Redis with 7-day auto-expiry
+- Query by date range, job ID, log level, error type
+- Error summary aggregation
+- Automatic cleanup of old logs
+
+**Key Functions:**
+- `log()`: Log structured events with metadata
+- `query_logs()`: Query logs with filters (start/end time, job_id, level, error_type)
+- `get_error_summary()`: Get error counts by type
+
+---
+
+### Changed: simple_app.py (added 2 new API endpoints after line 463)
+**Type:** Feature
+**Description:** Added log streaming API endpoints for Cursor/CLI access
+**Reason:** Enable remote log access without SSH into Railway
+**Impact:** New API endpoints: `/api/logs` and `/api/logs/errors/summary`
+**Risk Level:** Low (read-only endpoints)
+
+**New Endpoints:**
+
+1. **GET /api/logs**
+   - Query logs with flexible filters
+   - Supports relative dates (`1d`, `2d`, `yesterday`, `today`, `24h`)
+   - Returns structured JSON with logs array
+   
+   Examples:
+   ```bash
+   # Last 24 hours of errors
+   curl "https://your-app.railway.app/api/logs?start=1d&level=ERROR"
+   
+   # All logs for a specific job
+   curl "https://your-app.railway.app/api/logs?job_id=abc123"
+   
+   # Yesterday's logs
+   curl "https://your-app.railway.app/api/logs?start=yesterday"
+   ```
+
+2. **GET /api/logs/errors/summary**
+   - Aggregated error counts by type
+   - Useful for identifying recurring issues
+   
+   Example:
+   ```bash
+   curl "https://your-app.railway.app/api/logs/errors/summary?start=7d"
+   ```
+
+---
+
+### Changed: simple_worker.py
+**Type:** Feature + Optimization
+**Description:** Integrated log collector, improved retry logic with exponential backoff + jitter
+**Reason:** Better error tracking and prevent thundering herd problem
+**Impact:** All webhook failures now logged to Redis; retry timing improved
+**Risk Level:** Low (improvements to existing functionality)
+
+**Changes:**
+1. **Import log collector** (line 18):
+   ```python
+   from src.log_collector import get_log_collector
+   ```
+
+2. **WebhookSender class** (line 294):
+   - Added `job_id` parameter to constructor for log tracking
+   - Pass job_id through to retry function
+
+3. **Retry logic improvements** (lines 601-663):
+   - Log HTTP errors to structured logger (final attempt only)
+   - Log exceptions with full metadata
+   - Added **random jitter** (±20%) to exponential backoff to prevent thundering herd
+   - Track error types: `HTTP_403`, `HTTP_429`, `EXCEPTION`, etc.
+   
+   **Before:**
+   ```python
+   wait_time = (2**attempt) * 1  # 1s, 2s, 4s
+   ```
+   
+   **After:**
+   ```python
+   base_delay = (2**attempt) * 1
+   jitter = random.uniform(0.8, 1.2)  # ±20% randomness
+   wait_time = base_delay * jitter     # 0.8-1.2s, 1.6-2.4s, 3.2-4.8s
+   ```
+
+4. **Error metadata tracking**:
+   - HTTP status codes
+   - Response text preview (first 500 chars)
+   - Exception type and message
+   - Webhook URL
+   - Record number
+
+---
+
+### Changed: static/simple_app.js (lines 302-402)
+**Type:** Feature
+**Description:** Added stuck job detection to frontend progress polling
+**Reason:** Prevent users from staring at stuck progress bars without feedback
+**Impact:** Users get warned if job hasn't progressed in 5+ minutes
+**Risk Level:** Low (UI improvement only)
+
+**Features:**
+- Track progress changes over time
+- Console warning after 2 minutes of no progress
+- User warning after 5 minutes of being stuck
+- Auto-reset warning to avoid spam
+
+**Logic:**
+```javascript
+// Detect if progress hasn't changed for 5+ minutes
+if (currentProgress === lastProgress && timeSinceLastUpdate > 300) {
+    showMessage('⚠️ Job may be stuck at ${progress}%. Please contact support.', 'warning');
+}
+```
+
+---
+
 ## [Date: 2025-11-16 - CRITICAL FIX] RQ Worker ImportError - Connection deprecated
 
 ### Changed: worker.py (lines 9, 41-46)
