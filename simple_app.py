@@ -624,6 +624,190 @@ def get_error_summary():
         return jsonify({"error": f"Failed to fetch error summary: {str(e)}"}), 500
 
 
+@app.route("/api/diagnostics", methods=["GET"])
+def diagnostics():
+    """Comprehensive diagnostic endpoint for troubleshooting"""
+    import platform
+    import psutil
+    from datetime import datetime
+    
+    diagnostic_data = {
+        "timestamp": datetime.now().isoformat(),
+        "service_info": {},
+        "filesystem": {},
+        "redis": {},
+        "rq_workers": {},
+        "recent_jobs": {},
+        "system": {},
+    }
+    
+    # Service Information
+    try:
+        diagnostic_data["service_info"] = {
+            "service_type": os.getenv("SERVICE_TYPE", "unknown"),
+            "railway_environment": os.getenv("RAILWAY_ENVIRONMENT", "unknown"),
+            "railway_service_name": os.getenv("RAILWAY_SERVICE_NAME", "unknown"),
+            "railway_replica_id": os.getenv("RAILWAY_REPLICA_ID", "unknown"),
+            "port": os.getenv("PORT", "unknown"),
+            "redis_url": os.getenv("REDIS_URL", "not set")[:50] + "..." if os.getenv("REDIS_URL") else "not set",
+        }
+    except Exception as e:
+        diagnostic_data["service_info"]["error"] = str(e)
+    
+    # File System Status
+    try:
+        upload_folder = app.config["UPLOAD_FOLDER"]
+        diagnostic_data["filesystem"] = {
+            "upload_folder": upload_folder,
+            "upload_folder_exists": os.path.exists(upload_folder),
+            "upload_folder_writable": os.access(upload_folder, os.W_OK) if os.path.exists(upload_folder) else False,
+            "recent_jobs": [],
+        }
+        
+        # Check recent jobs in upload folder
+        if os.path.exists(upload_folder):
+            job_folders = []
+            for item in os.listdir(upload_folder):
+                item_path = os.path.join(upload_folder, item)
+                if os.path.isdir(item_path):
+                    job_folders.append(item)
+            
+            # Get last 5 jobs
+            job_folders.sort(key=lambda x: os.path.getmtime(os.path.join(upload_folder, x)), reverse=True)
+            for job_id in job_folders[:5]:
+                job_path = os.path.join(upload_folder, job_id)
+                files_in_job = os.listdir(job_path)
+                
+                # Check for processed file
+                processed_files = [f for f in files_in_job if f.startswith("processed_")]
+                
+                diagnostic_data["filesystem"]["recent_jobs"].append({
+                    "job_id": job_id,
+                    "path": job_path,
+                    "file_count": len(files_in_job),
+                    "has_processed_file": len(processed_files) > 0,
+                    "processed_files": processed_files,
+                    "modified": datetime.fromtimestamp(os.path.getmtime(job_path)).isoformat(),
+                })
+        
+        # Disk usage
+        disk = psutil.disk_usage(upload_folder if os.path.exists(upload_folder) else '/')
+        diagnostic_data["filesystem"]["disk_usage"] = {
+            "total_gb": round(disk.total / (1024**3), 2),
+            "used_gb": round(disk.used / (1024**3), 2),
+            "free_gb": round(disk.free / (1024**3), 2),
+            "percent_used": disk.percent,
+        }
+        
+    except Exception as e:
+        diagnostic_data["filesystem"]["error"] = str(e)
+    
+    # Redis Connectivity
+    try:
+        # Test Redis connection
+        redis_client.ping()
+        diagnostic_data["redis"]["status"] = "connected"
+        diagnostic_data["redis"]["connection_info"] = {
+            "host": redis_client.connection_pool.connection_kwargs.get("host", "unknown"),
+            "port": redis_client.connection_pool.connection_kwargs.get("port", "unknown"),
+            "db": redis_client.connection_pool.connection_kwargs.get("db", "unknown"),
+        }
+        
+        # Get Redis info
+        info = redis_client.info("stats")
+        diagnostic_data["redis"]["stats"] = {
+            "total_connections_received": info.get("total_connections_received", 0),
+            "total_commands_processed": info.get("total_commands_processed", 0),
+            "instantaneous_ops_per_sec": info.get("instantaneous_ops_per_sec", 0),
+        }
+        
+        # Count job status keys
+        job_keys = redis_client.keys("job_status:*")
+        diagnostic_data["redis"]["job_count"] = len(job_keys)
+        
+    except Exception as e:
+        diagnostic_data["redis"]["status"] = "error"
+        diagnostic_data["redis"]["error"] = str(e)
+    
+    # RQ Workers Status
+    try:
+        from rq import Queue, Worker
+        
+        queue = Queue("csv_processing", connection=redis_client)
+        workers = Worker.all(queue=queue)
+        
+        diagnostic_data["rq_workers"] = {
+            "queue_name": "csv_processing",
+            "jobs_queued": queue.count,
+            "workers_count": len(workers),
+            "workers": [],
+        }
+        
+        for worker in workers:
+            diagnostic_data["rq_workers"]["workers"].append({
+                "name": worker.name,
+                "state": worker.get_state(),
+                "current_job": str(worker.get_current_job()) if worker.get_current_job() else None,
+                "successful_jobs": worker.successful_job_count,
+                "failed_jobs": worker.failed_job_count,
+            })
+        
+    except Exception as e:
+        diagnostic_data["rq_workers"]["error"] = str(e)
+    
+    # Recent Jobs Status (from Redis)
+    try:
+        job_keys = redis_client.keys("job_status:*")
+        recent_jobs = []
+        
+        for key in job_keys[:10]:  # Last 10 jobs
+            try:
+                job_data = redis_client.hget(key, "data")
+                if job_data:
+                    job_info = json.loads(job_data)
+                    recent_jobs.append({
+                        "job_id": job_info.get("job_id", "unknown"),
+                        "status": job_info.get("status", "unknown"),
+                        "progress": job_info.get("progress", 0),
+                        "message": job_info.get("message", ""),
+                        "webhook_status": job_info.get("webhook_status", "none"),
+                        "result_path": job_info.get("result_path", "none"),
+                        "created_at": job_info.get("created_at", "unknown"),
+                    })
+            except Exception:
+                pass
+        
+        diagnostic_data["recent_jobs"] = {
+            "count": len(recent_jobs),
+            "jobs": recent_jobs,
+        }
+        
+    except Exception as e:
+        diagnostic_data["recent_jobs"]["error"] = str(e)
+    
+    # System Information
+    try:
+        diagnostic_data["system"] = {
+            "platform": platform.platform(),
+            "python_version": platform.python_version(),
+            "cpu_count": psutil.cpu_count(),
+            "cpu_percent": psutil.cpu_percent(interval=1),
+            "memory": {
+                "total_gb": round(psutil.virtual_memory().total / (1024**3), 2),
+                "available_gb": round(psutil.virtual_memory().available / (1024**3), 2),
+                "percent_used": psutil.virtual_memory().percent,
+            },
+            "uptime_seconds": round(time.time() - psutil.boot_time(), 2),
+        }
+    except Exception as e:
+        diagnostic_data["system"]["error"] = str(e)
+    
+    return jsonify({
+        "success": True,
+        "diagnostics": diagnostic_data,
+    })
+
+
 @app.route("/api/test-webhook", methods=["POST"])
 def test_webhook():
     """Test webhook endpoint with sample data"""

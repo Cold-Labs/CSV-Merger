@@ -4,6 +4,44 @@ This file tracks all code changes made to the project. Every modification must b
 
 ---
 
+## [Date: 2025-11-17 16:10] Diagnostic API Endpoint for Troubleshooting
+
+### Created: /api/diagnostics GET endpoint
+**Type:** Feature / Debug Tool
+**Description:** Comprehensive diagnostic endpoint showing service status, file system, Redis connectivity, RQ workers, and system info
+**Reason:** Need to troubleshoot webhook jobs stuck at 80% - likely shared storage issue between web/worker services
+**Impact:** Enables rapid diagnosis of deployment issues via browser URL
+**Risk Level:** Low (read-only endpoint)
+
+**What It Shows:**
+1. **Service Info:** SERVICE_TYPE, Railway environment, replica ID, port
+2. **File System:** Upload folder status, recent jobs, processed files presence, disk usage
+3. **Redis:** Connection status, stats, job count in Redis
+4. **RQ Workers:** Queue status, worker count, current jobs, success/failure counts
+5. **Recent Jobs:** Last 10 jobs from Redis with status/progress/webhook_status
+6. **System:** Platform, Python version, CPU, memory, uptime
+
+**Usage:**
+```
+# Visit in browser:
+https://your-railway-service.railway.app/api/diagnostics
+
+# Or via curl:
+curl https://your-railway-service.railway.app/api/diagnostics | jq
+```
+
+**Key Diagnostic Data:**
+- `filesystem.recent_jobs[].has_processed_file` - Check if CSV exists
+- `filesystem.recent_jobs[].path` - Shows actual file paths
+- `rq_workers.workers_count` - Verify workers are running
+- `rq_workers.jobs_queued` - Check queue backlog
+- `recent_jobs[].result_path` - Path worker is trying to access
+- `recent_jobs[].webhook_status` - Current webhook delivery status
+
+**Next Step:** Use this to confirm the "processed file not found" issue between separate web/worker containers.
+
+---
+
 ## [Date: 2025-11-17] Separate Services Architecture for Horizontal Scaling
 
 ### Created: start_web.sh, start_worker.sh (new files)
