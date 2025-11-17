@@ -284,7 +284,7 @@ def update_job_status_with_time(
 
 
 class WebhookSender:
-    """Handles webhook delivery with retry logic and rate limiting"""
+    """Handles webhook delivery with retry logic and adaptive rate limiting"""
 
     def __init__(self, webhook_url: str, rate_limit: int = 10, job_id: Optional[str] = None):
         self.webhook_url = webhook_url
@@ -292,6 +292,11 @@ class WebhookSender:
         self.rate_limit = rate_limit  # requests per second
         self.delay_between_requests = 1.0 / rate_limit  # seconds between requests
         self.job_id = job_id  # Track job ID for logging
+        
+        # Adaptive rate limiting - detect and respond to throttling
+        self.throttle_count = 0  # Count consecutive 429 errors
+        self.original_rate_limit = rate_limit  # Store original rate
+        self.is_throttled = False  # Track if we've reduced rate
 
     def _split_emails_to_columns(
         self, records: List[Dict], table_type: str
@@ -429,7 +434,7 @@ class WebhookSender:
 
             # Update progress with estimated time
             try:
-                progress = 80 + int((record_num / total_records) * 15)  # 80-95%
+                progress = 80 + int((record_num / total_records) * 20)  # 80-100%
                 message = (
                     f"Sending webhooks"  # Simple message, let frontend add details
                 )
@@ -595,9 +600,30 @@ class WebhookSender:
                 )
 
                 if response.status_code == 200:
+                    # Success! Reset throttle counter
+                    self.throttle_count = 0
                     return True
+                    
+                elif response.status_code == 429:
+                    # Rate limited - implement adaptive rate limiting
+                    self.throttle_count += 1
+                    
+                    # After 3 consecutive 429s, reduce rate limit
+                    if self.throttle_count >= 3 and not self.is_throttled:
+                        self.is_throttled = True
+                        self.rate_limit = 5  # Drop to 5 req/sec
+                        self.delay_between_requests = 1.0 / self.rate_limit
+                        print(f"🚨 THROTTLING DETECTED! Reducing rate to {self.rate_limit} req/sec to avoid further 429s")
+                    
+                    print(f"⚠️ Record {record_num} attempt {attempt + 1}: HTTP 429 (Rate Limited)")
+                    
+                    # For 429, use SHORT fixed delay (no exponential backoff)
+                    if attempt < max_retries - 1:
+                        time.sleep(0.5)  # Just 500ms wait
+                        continue  # Retry immediately after short wait
+                    
                 else:
-                    # Log non-200 responses
+                    # Other non-200 responses
                     error_type = f"HTTP_{response.status_code}"
                     print(
                         f"⚠️ Record {record_num} attempt {attempt + 1}: HTTP {response.status_code}"
@@ -645,9 +671,10 @@ class WebhookSender:
                     except Exception as log_err:
                         print(f"⚠️ Failed to log error: {log_err}")
 
-            # Exponential backoff with jitter
+            # Exponential backoff with jitter (for non-429 errors)
+            # Note: 429 errors use short fixed delay (handled above with 'continue')
             if attempt < max_retries - 1:
-                # Base delay: 1s, 2s, 4s
+                # Base delay: 1s, 2s, 4s (for server errors, exceptions, etc.)
                 base_delay = (2**attempt) * 1
                 # Add small random jitter (±20%) to prevent thundering herd
                 import random
@@ -656,6 +683,7 @@ class WebhookSender:
                 print(f"⏳ Retrying record {record_num} in {wait_time:.1f}s...")
                 time.sleep(wait_time)
 
+        # All retries exhausted - this webhook failed
         return False
 
 
