@@ -83,6 +83,14 @@ def send_processed_data_webhook_sync(
             max_retries=3,
         )
 
+        # Update final status to completed
+        update_job_status(
+            app_job_id,
+            "completed",
+            100,
+            f"✅ Completed! Sent {success_count} webhooks, {failed_count} failed",
+        )
+
         print(
             f"✅ Job {app_job_id} completed: {success_count} sent, {failed_count} failed"
         )
@@ -90,6 +98,13 @@ def send_processed_data_webhook_sync(
 
     except Exception as e:
         print(f"❌ Job {app_job_id} failed: {e}")
+        # Update status to failed
+        update_job_status(
+            app_job_id,
+            "failed",
+            100,
+            f"❌ Failed: {str(e)}",
+        )
         return 0, 1
 
 
