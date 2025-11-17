@@ -4,6 +4,45 @@ This file tracks all code changes made to the project. Every modification must b
 
 ---
 
+## [Date: 2025-11-17 17:30] Fix Diagnostics: Show All Jobs + Better Cancel Button Logic
+
+### Changed: simple_app.py
+**Type:** Bug Fix
+**Description:** Fixed diagnostics to show all recent jobs sorted by time + improved cancel button visibility
+**Reason:** User reported "0 recent jobs" after cancelling, and cancel button wasn't always visible
+**Impact:** Diagnostics now properly shows all jobs with correct sorting and cancellable states
+**Risk Level:** Low (improves data display)
+
+**Problems Fixed:**
+1. **"0 recent jobs"** - Was only fetching first 10 random keys from Redis
+2. **No sorting** - Jobs appeared in random order
+3. **Cancel button hidden** - Only showed for `status='processing'`, not for queued webhooks
+
+**Solution:**
+
+**Diagnostics API (`/api/diagnostics`):**
+- ✅ Fetches ALL jobs from Redis (not just first 10)
+- ✅ Sorts by `created_at` timestamp (most recent first)
+- ✅ Shows up to 20 most recent jobs
+- ✅ Includes `can_cancel` field
+- ✅ Better error handling
+
+**Diagnostics UI:**
+- ✅ Cancel button shows if:
+  - `status === 'processing'` OR
+  - `webhook_status === 'queued'` OR  
+  - `webhook_status === 'processing'`
+- ✅ This allows cancelling jobs waiting in webhook queue
+- ✅ Prevents showing cancel for already cancelled jobs
+
+**Now users can:**
+- See all their recent jobs (up to 20)
+- Jobs sorted by time (newest first)
+- Cancel both processing AND queued webhook jobs
+- Clear visibility of job states
+
+---
+
 ## [Date: 2025-11-17 17:20] **CRITICAL FIX: Job Cancellation Now Actually Works + UI Management**
 
 ### Changed: simple_app.py

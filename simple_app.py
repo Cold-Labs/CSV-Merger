@@ -1080,7 +1080,7 @@ def diagnostics_ui():
                                         <td><code>${job.webhook_status}</code></td>
                                         <td style="font-size: 12px; max-width: 250px; overflow: hidden; text-overflow: ellipsis;">${job.message}</td>
                                         <td style="text-align: center;">
-                                            ${job.status === 'processing' ? `
+                                            ${(job.status === 'processing' || job.webhook_status === 'queued' || job.webhook_status === 'processing') && job.status !== 'cancelled' ? `
                                                 <button onclick="cancelJob('${job.job_id}')" class="cancel-btn" title="Cancel job">
                                                     🛑 Cancel
                                                 </button>
@@ -1312,7 +1312,7 @@ def diagnostics():
         job_keys = redis_client.keys("job_status:*")
         recent_jobs = []
         
-        for key in job_keys[:10]:  # Last 10 jobs
+        for key in job_keys:  # Get all jobs
             try:
                 job_data = redis_client.hget(key, "data")
                 if job_data:
@@ -1325,9 +1325,17 @@ def diagnostics():
                         "webhook_status": job_info.get("webhook_status", "none"),
                         "result_path": job_info.get("result_path", "none"),
                         "created_at": job_info.get("created_at", "unknown"),
+                        "can_cancel": job_info.get("can_cancel", False),
                     })
-            except Exception:
+            except Exception as ex:
+                print(f"⚠️ Could not parse job data for key {key}: {ex}")
                 pass
+        
+        # Sort by created_at (most recent first)
+        recent_jobs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        
+        # Limit to 20 most recent
+        recent_jobs = recent_jobs[:20]
         
         diagnostic_data["recent_jobs"] = {
             "count": len(recent_jobs),
@@ -1335,7 +1343,7 @@ def diagnostics():
         }
         
     except Exception as e:
-        diagnostic_data["recent_jobs"]["error"] = str(e)
+        diagnostic_data["recent_jobs"] = {"error": str(e), "count": 0, "jobs": []}
     
     # System Information
     try:
